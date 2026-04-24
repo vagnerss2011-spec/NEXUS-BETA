@@ -51,3 +51,29 @@ def require_role(*roles: UserRole):
             raise HTTPException(status_code=403, detail="Permissão insuficiente")
         return current_user
     return checker
+
+def is_master(user: User) -> bool:
+    return user.role == UserRole.admin
+
+def require_master():
+    async def checker(current_user: User = Depends(get_current_user)):
+        if not is_master(current_user):
+            raise HTTPException(status_code=403, detail="Apenas admin master")
+        return current_user
+    return checker
+
+def ensure_empresa_access(user: User, empresa_id: Optional[int]) -> int:
+    """Valida que `user` pode operar sobre `empresa_id`. Retorna o id efetivo a usar.
+
+    - Admin master: pode acessar qualquer empresa; `empresa_id` obrigatório.
+    - Demais roles: ignoram `empresa_id` e ficam presos à empresa do próprio usuário.
+    """
+    if is_master(user):
+        if empresa_id is None:
+            raise HTTPException(status_code=400, detail="empresa_id é obrigatório para admin master")
+        return empresa_id
+    if user.empresa_id is None:
+        raise HTTPException(status_code=403, detail="Usuário sem empresa vinculada")
+    if empresa_id is not None and empresa_id != user.empresa_id:
+        raise HTTPException(status_code=403, detail="Sem acesso a esta empresa")
+    return user.empresa_id

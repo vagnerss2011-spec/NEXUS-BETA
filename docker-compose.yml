@@ -16,8 +16,8 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     env_file: ./backend/.env
     depends_on:
       - db
@@ -26,9 +26,28 @@ services:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "5173:80"
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      NGINX_ENVSUBST_VARS: "DOMAIN"
+    volumes:
+      - ./infra/certbot/conf:/etc/letsencrypt
+      - ./infra/certbot/www:/var/www/certbot
     depends_on:
       - backend
+    # Recarrega o nginx a cada 6h para captar renovações do certbot.
+    command: >
+      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec /docker-entrypoint.sh nginx -g 'daemon off;'"
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - ./infra/certbot/conf:/etc/letsencrypt
+      - ./infra/certbot/www:/var/www/certbot
+    # Tenta renovar a cada 12h (só efetua troca se estiver a <30 dias do vencimento).
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;'"
 
 volumes:
   pgdata:

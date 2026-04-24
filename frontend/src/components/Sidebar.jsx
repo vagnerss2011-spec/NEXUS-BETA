@@ -1,20 +1,35 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Router, Archive, Users, LogOut, Shield } from 'lucide-react'
-
-const links = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/devices', icon: Router, label: 'Dispositivos' },
-  { to: '/backups', icon: Archive, label: 'Backups' },
-  { to: '/users', icon: Users, label: 'Usuários' },
-]
+import { LayoutDashboard, Router, Archive, Users, LogOut, Shield, Settings, ScrollText, Building2, Repeat } from 'lucide-react'
+import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
 
 export default function Sidebar() {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const empresa = getCurrentEmpresa()
+  const isMaster = user.role === 'admin'
+  const canSeeUsers = ['admin', 'admin_empresa'].includes(user.role)
+  const canSeeSettings = ['admin', 'admin_empresa'].includes(user.role)
+  const canSeeLogs = ['admin', 'admin_empresa'].includes(user.role)
 
-  function logout() {
+  const links = [
+    ...(isMaster ? [{ to: '/empresas', icon: Building2, label: 'Empresas' }] : []),
+    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+    { to: '/devices', icon: Router, label: 'Dispositivos' },
+    { to: '/backups', icon: Archive, label: 'Backups' },
+    ...(canSeeUsers ? [{ to: '/users', icon: Users, label: 'Usuários' }] : []),
+    ...(canSeeLogs ? [{ to: '/logs', icon: ScrollText, label: 'Logs' }] : []),
+    ...(canSeeSettings ? [{ to: '/settings', icon: Settings, label: 'Configurações' }] : []),
+  ]
+
+  async function logout() {
+    try { await api.post('/auth/logout') } catch { /* ignora para não travar o logout */ }
     localStorage.clear()
     navigate('/login')
+  }
+
+  function trocarEmpresa() {
+    setCurrentEmpresa(null)
+    navigate('/empresas')
   }
 
   return (
@@ -27,7 +42,23 @@ export default function Sidebar() {
         <p className="text-xs text-slate-400 mt-1">Backup Manager</p>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1">
+      {empresa?.id && (
+        <div className="p-4 border-b border-slate-700">
+          <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Empresa atual</p>
+          <div className="flex items-center gap-2">
+            <Building2 size={15} className="text-sky-400 shrink-0" />
+            <p className="text-sm text-white font-medium truncate flex-1">{empresa.nome || `#${empresa.id}`}</p>
+          </div>
+          {isMaster && (
+            <button onClick={trocarEmpresa}
+              className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs text-slate-400 hover:text-sky-400 border border-slate-700 hover:border-sky-500/50 rounded-md py-1.5 transition-colors">
+              <Repeat size={12} /> Trocar empresa
+            </button>
+          )}
+        </div>
+      )}
+
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {links.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to}
             className={({ isActive }) =>
@@ -51,7 +82,7 @@ export default function Sidebar() {
           </div>
           <div className="overflow-hidden">
             <p className="text-sm font-medium text-white truncate">{user.nome || 'Usuário'}</p>
-            <p className="text-xs text-slate-400 capitalize">{user.role || ''}</p>
+            <p className="text-xs text-slate-400 capitalize">{user.role?.replace('_', ' ') || ''}</p>
           </div>
         </div>
         <button onClick={logout}

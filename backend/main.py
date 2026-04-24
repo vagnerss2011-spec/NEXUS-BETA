@@ -1,15 +1,99 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 from database import engine, Base
-from routers import auth, users, devices, backups
+from routers import auth, users, devices, backups, settings, logs, empresas, atividades
 from services.scheduler import iniciar_scheduler, scheduler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Enum ADD VALUE precisa rodar fora de transação em algumas versões do Postgres.
+    async with engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        try:
+            await conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'admin_empresa'"))
+        except Exception:
+            pass  # tipo pode ainda não existir no primeiro boot; create_all cria logo abaixo
+        try:
+            await conn.execute(text("ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS 'device_removido'"))
+        except Exception:
+            pass
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    iniciar_scheduler()
+
+        # --- Migrações incrementais (idempotentes) ---
+
+        # 1) backups.log_scheduler_id (legado)
+        await conn.execute(text("""
+            ALTER TABLE backups
+            ADD COLUMN IF NOT EXISTS log_scheduler_id INTEGER
+            REFERENCES log_scheduler(id) ON DELETE SET NULL
+        """))
+
+        # 3) users.empresa_id
+        await conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS empresa_id INTEGER
+            REFERENCES empresas(id) ON DELETE SET NULL
+        """))
+
+        # 4) devices.empresa_id — adicionado nullable; depois migra órfãos e vira NOT NULL
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS empresa_id INTEGER
+            REFERENCES empresas(id) ON DELETE CASCADE
+        """))
+
+        # 5) Cria empresa default "Empresa de Testes" se não existir
+        await conn.execute(text("""
+            INSERT INTO empresas (nome, cnpj, ativo)
+            SELECT 'Empresa de Testes', NULL, TRUE
+            WHERE NOT EXISTS (SELECT 1 FROM empresas WHERE nome = 'Empresa de Testes')
+        """))
+
+        # 6) Migra dispositivos órfãos para a empresa de testes
+        await conn.execute(text("""
+            UPDATE devices
+            SET empresa_id = (SELECT id FROM empresas WHERE nome = 'Empresa de Testes' LIMIT 1)
+            WHERE empresa_id IS NULL
+        """))
+
+        # 7) Agora pode virar NOT NULL com segurança
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='devices' AND column_name='empresa_id' AND is_nullable='YES'
+                ) THEN
+                    ALTER TABLE devices ALTER COLUMN empresa_id SET NOT NULL;
+                END IF;
+            END$$;
+        """))
+
+        # 8) configuracoes.log_retention_days (default 30)
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS log_retention_days INTEGER NOT NULL DEFAULT 30
+        """))
+
+        # 9) devices.tipo (enum devicetipo, default 'roteador')
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'devicetipo') THEN
+                    CREATE TYPE devicetipo AS ENUM ('roteador', 'olt', 'switch', 'wireless');
+                END IF;
+            END$$;
+        """))
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS tipo devicetipo NOT NULL DEFAULT 'roteador'
+        """))
+
+    await iniciar_scheduler()
     yield
     scheduler.shutdown()
 
@@ -33,8 +117,12 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(empresas.router)
 app.include_router(devices.router)
 app.include_router(backups.router)
+app.include_router(settings.router)
+app.include_router(logs.router)
+app.include_router(atividades.router)
 
 @app.get("/")
 async def root():

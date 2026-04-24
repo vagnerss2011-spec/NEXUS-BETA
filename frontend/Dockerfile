@@ -7,5 +7,6 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+# O entrypoint do nginx:alpine aplica envsubst automaticamente em /etc/nginx/templates/*.template
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+EXPOSE 80 443

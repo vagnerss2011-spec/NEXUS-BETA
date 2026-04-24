@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Shield, Loader2 } from 'lucide-react'
-import api from '../services/api'
+import api, { setCurrentEmpresa } from '../services/api'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -22,7 +22,23 @@ export default function Login() {
       localStorage.setItem('token', data.access_token)
       const me = await api.get('/auth/me')
       localStorage.setItem('user', JSON.stringify(me.data))
-      navigate('/dashboard')
+
+      if (me.data.role === 'admin') {
+        // admin master escolhe a empresa; limpa contexto anterior
+        setCurrentEmpresa(null)
+        navigate('/empresas')
+      } else {
+        // demais roles: empresa fixa do próprio usuário
+        if (me.data.empresa_id) {
+          try {
+            const emp = await api.get(`/empresas/${me.data.empresa_id}`)
+            setCurrentEmpresa({ id: emp.data.id, nome: emp.data.nome })
+          } catch {
+            setCurrentEmpresa({ id: me.data.empresa_id, nome: '' })
+          }
+        }
+        navigate('/dashboard')
+      }
     } catch {
       setErro('E-mail ou senha inválidos')
     } finally {
