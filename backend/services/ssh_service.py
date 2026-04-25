@@ -9,8 +9,11 @@ from models import Device, DeviceVendor, Protocolo
 from services.crypto import decrypt
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-# Pega ---- More ----, -- More --, ---- More 25% ----, etc.
-_MORE_RE = re.compile(r"-{2,}\s*[Mm]ore[^-\n]*-{2,}")
+# Casa o More prompt + espaços adjacentes na MESMA linha. Inclui o padding
+# que o Huawei manda pra limpar visualmente o prompt na tela (~15 espaços
+# entre "----" e o início da próxima linha de config). [^\S\n] = whitespace
+# que NÃO é newline, pra não comer quebras de linha legítimas.
+_MORE_RE = re.compile(r"[^\S\n]*-{2,}\s*[Mm]ore[^-\n]*-{2,}[^\S\n]*")
 
 
 def _apply_bs(s: str) -> str:
