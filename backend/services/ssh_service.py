@@ -9,7 +9,31 @@ from models import Device, DeviceVendor, Protocolo
 from services.crypto import decrypt
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_MORE_RE = re.compile(r"--\s*More\s*--")
+# Pega ---- More ----, -- More --, ---- More 25% ----, etc.
+_MORE_RE = re.compile(r"-{2,}\s*[Mm]ore[^-\n]*-{2,}")
+
+
+def _apply_bs(s: str) -> str:
+    """Emula cursor de terminal: \\x08 (backspace) apaga o char anterior.
+    Necessário para Huawei/Datacom que apagam o prompt de paginação com
+    sequências \\b\\b\\b... antes de mandar a próxima página."""
+    out = []
+    for c in s:
+        if c == "\x08":
+            if out:
+                out.pop()
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _clean_output(raw: str) -> str:
+    """Pipeline padrão de limpeza pra coleta com paginação manual."""
+    s = _ANSI_RE.sub("", raw)
+    s = _apply_bs(s)
+    s = _MORE_RE.sub("", s)
+    s = s.replace("\r", "")
+    return s
 
 DEVICE_TYPES_SSH = {
     DeviceVendor.huawei:    "huawei",
@@ -101,9 +125,7 @@ def _run_datacom_netmiko(device: Device, senha: str) -> tuple[str, str]:
                     break
                 time.sleep(0.3)
 
-    cleaned = _ANSI_RE.sub("", output)
-    cleaned = _MORE_RE.sub("", cleaned)
-    cleaned = cleaned.replace("\x08", "").replace("\r", "")
+    cleaned = _clean_output(output)
     if not cleaned.strip():
         return "falha", "Sem resposta do equipamento"
     return "sucesso", cleaned
@@ -152,9 +174,7 @@ def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
                     break
                 time.sleep(0.3)
 
-    cleaned = _ANSI_RE.sub("", output)
-    cleaned = _MORE_RE.sub("", cleaned)
-    cleaned = cleaned.replace("\x08", "").replace("\r", "")
+    cleaned = _clean_output(output)
     if not cleaned.strip():
         return "falha", "Sem resposta do equipamento"
     return "sucesso", cleaned
