@@ -166,6 +166,7 @@ class AtividadeOut(BaseModel):
     usuario_id: Optional[int] = None
     usuario_nome: str
     empresa_id: Optional[int] = None
+    empresa_nome: Optional[str] = None
     ip: Optional[str] = None
     alvo_tipo: Optional[str] = None
     alvo_nome: Optional[str] = None

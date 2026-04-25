@@ -18,7 +18,7 @@ export function getUser() {
 
 // Endpoints que são escopados por empresa (para admin master enviamos ?empresa_id=)
 // Obs.: /users fica de fora — admin master deve ver TODOS os usuários (masters + admins de todas as empresas)
-const SCOPED_PATHS = ['/devices', '/backups']
+const SCOPED_PATHS = ['/devices', '/backups', '/atividades']
 function isScoped(url) {
   if (!url) return false
   const u = url.split('?')[0]
