@@ -5,3 +5,6 @@ node_modules/
 dist/
 .venv/
 *.egg-info/
+
+# Certificados Let's Encrypt (contém chave privada — NUNCA commitar)
+infra/
