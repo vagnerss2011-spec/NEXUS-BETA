@@ -110,6 +110,7 @@ def _run_datacom_netmiko(device: Device, senha: str) -> tuple[str, str]:
         output = ""
         start = time.time()
         last_data = time.time()
+        next_more_search = 0  # posição a partir da qual procurar o próximo More
         TOTAL_TIMEOUT = 600
         IDLE_TIMEOUT = 8.0
         while True:
@@ -120,9 +121,13 @@ def _run_datacom_netmiko(device: Device, senha: str) -> tuple[str, str]:
             if chunk:
                 output += chunk
                 last_data = now
-                if _MORE_RE.search(output[-400:]):
+                # Procura o próximo More a partir da posição não processada.
+                # NÃO substituímos no buffer — o regex precisa do padding completo
+                # pra match no _clean_output (More + espaços vêm em chunks separados).
+                m = _MORE_RE.search(output, next_more_search)
+                if m:
                     net.write_channel(" ")
-                    output = _MORE_RE.sub("", output)
+                    next_more_search = m.end()
             else:
                 if now - last_data > IDLE_TIMEOUT:
                     break
@@ -159,6 +164,7 @@ def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
         output = ""
         start = time.time()
         last_data = time.time()
+        next_more_search = 0  # posição a partir da qual procurar o próximo More
         TOTAL_TIMEOUT = 600
         IDLE_TIMEOUT = 8.0
         while True:
@@ -169,9 +175,13 @@ def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
             if chunk:
                 output += chunk
                 last_data = now
-                if _MORE_RE.search(output[-400:]):
+                # Procura o próximo More a partir da posição não processada.
+                # NÃO substituímos no buffer — o regex precisa do padding completo
+                # pra match no _clean_output (More + espaços vêm em chunks separados).
+                m = _MORE_RE.search(output, next_more_search)
+                if m:
                     net.write_channel(" ")
-                    output = _MORE_RE.sub("", output)
+                    next_more_search = m.end()
             else:
                 if now - last_data > IDLE_TIMEOUT:
                     break
