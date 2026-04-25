@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff } from 'lucide-react'
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -32,6 +32,7 @@ export default function Devices() {
   const [loading, setLoading] = useState(false)
   const [runningId, setRunningId] = useState(null)
   const [backupResult, setBackupResult] = useState(null)
+  const [mostrarSenha, setMostrarSenha] = useState(false)
   const [busca, setBusca] = useState('')
   const [filtroFabricante, setFiltroFabricante] = useState('todos')
   const [filtroTipo, setFiltroTipo] = useState('todos')
@@ -79,8 +80,8 @@ export default function Devices() {
 
   useEffect(() => { load() }, [])
 
-  function openNew() { setForm(BLANK); setModal('new') }
-  function openEdit(d) { setForm({ ...d, protocolo: d.protocolo || 'ssh', senha_ssh: '' }); setModal(d.id) }
+  function openNew() { setForm(BLANK); setMostrarSenha(false); setModal('new') }
+  function openEdit(d) { setForm({ ...d, protocolo: d.protocolo || 'ssh', senha_ssh: '' }); setMostrarSenha(false); setModal(d.id) }
 
   async function save() {
     setLoading(true)
@@ -351,7 +352,6 @@ export default function Devices() {
                 { label: 'IP (IPv4 ou IPv6)', key: 'ip', placeholder: '192.168.1.1 ou 2001:db8::1' },
                 { label: 'Porta SSH', key: 'porta', placeholder: '22', type: 'number' },
                 { label: 'Usuário SSH', key: 'usuario_ssh', placeholder: 'admin' },
-                { label: 'Senha SSH', key: 'senha_ssh', placeholder: '••••••••', type: 'password' },
               ].map(({ label, key, placeholder, type = 'text' }) => (
                 <div key={key}>
                   <label className="block text-sm text-slate-400 mb-1.5">{label}</label>
@@ -360,6 +360,35 @@ export default function Devices() {
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors" />
                 </div>
               ))}
+              <div>
+                <label className="block text-sm text-slate-400 mb-1.5">Senha SSH</label>
+                <div className="relative">
+                  <input
+                    type={mostrarSenha ? 'text' : 'password'}
+                    value={form.senha_ssh}
+                    onChange={e => setForm(f => ({ ...f, senha_ssh: e.target.value }))}
+                    placeholder="••••••••"
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-3 pr-10 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarSenha(v => !v)}
+                    title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-sky-400 transition-colors"
+                  >
+                    {mostrarSenha ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={mostrarSenha}
+                    onChange={e => setMostrarSenha(e.target.checked)}
+                    className="accent-sky-500"
+                  />
+                  Mostrar senha
+                </label>
+              </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Tipo de equipamento</label>
                 <select value={form.tipo || 'roteador'} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}
