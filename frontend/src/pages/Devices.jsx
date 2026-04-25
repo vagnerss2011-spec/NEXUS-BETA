@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff } from 'lucide-react'
+import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle } from 'lucide-react'
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -33,6 +33,7 @@ export default function Devices() {
   const [runningId, setRunningId] = useState(null)
   const [backupResult, setBackupResult] = useState(null)
   const [mostrarSenha, setMostrarSenha] = useState(false)
+  const [confirmandoFab, setConfirmandoFab] = useState(false)
   const [busca, setBusca] = useState('')
   const [filtroFabricante, setFiltroFabricante] = useState('todos')
   const [filtroTipo, setFiltroTipo] = useState('todos')
@@ -80,16 +81,24 @@ export default function Devices() {
 
   useEffect(() => { load() }, [])
 
-  function openNew() { setForm(BLANK); setMostrarSenha(false); setModal('new') }
-  function openEdit(d) { setForm({ ...d, protocolo: d.protocolo || 'ssh', senha_ssh: '' }); setMostrarSenha(false); setModal(d.id) }
+  function openNew() { setForm(BLANK); setMostrarSenha(false); setConfirmandoFab(false); setModal('new') }
+  function openEdit(d) { setForm({ ...d, protocolo: d.protocolo || 'ssh', senha_ssh: '' }); setMostrarSenha(false); setConfirmandoFab(false); setModal(d.id) }
+  function fecharModal() { setModal(null); setConfirmandoFab(false) }
 
   async function save() {
+    // Em "novo dispositivo", força confirmação do fabricante antes de salvar.
+    // O comando de coleta de backup depende desse valor — escolha errada
+    // gera falha ou backup incorreto.
+    if (modal === 'new' && !confirmandoFab) {
+      setConfirmandoFab(true)
+      return
+    }
     setLoading(true)
     try {
       const payload = { ...form, empresa_id: empresa?.id }
       if (modal === 'new') await api.post('/devices/', payload)
       else await api.put(`/devices/${modal}`, payload)
-      setModal(null)
+      fecharModal()
       load()
     } finally { setLoading(false) }
   }
@@ -344,7 +353,7 @@ export default function Devices() {
                   </span>
                 )}
               </div>
-              <button onClick={() => setModal(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+              <button onClick={fecharModal} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
             <div className="p-5 space-y-4">
               {[
@@ -425,17 +434,45 @@ export default function Devices() {
                 </div>
               </div>
             </div>
-            <div className="flex gap-3 p-5 border-t border-slate-700">
-              <button onClick={() => setModal(null)}
-                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm transition-colors">
-                Cancelar
-              </button>
-              <button onClick={save} disabled={loading}
-                className="flex-1 bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-white py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
-                {loading && <Loader2 size={14} className="animate-spin" />}
-                Salvar
-              </button>
-            </div>
+            {confirmandoFab ? (
+              <div className="p-5 border-t border-slate-700 bg-amber-500/5">
+                <div className="flex items-start gap-3 mb-4">
+                  <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="text-white font-medium">Confirme o fabricante</p>
+                    <p className="text-slate-400 mt-1">
+                      Você selecionou: <span className="capitalize text-amber-300 font-semibold">{form.fabricante}</span>
+                    </p>
+                    <p className="text-xs text-slate-500 mt-2">
+                      O comando de coleta de backup depende deste valor — escolha errada gera falha ou backup incorreto.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={() => setConfirmandoFab(false)}
+                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm transition-colors">
+                    Voltar e revisar
+                  </button>
+                  <button onClick={save} disabled={loading}
+                    className="flex-1 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-white py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                    {loading && <Loader2 size={14} className="animate-spin" />}
+                    Confirmar e salvar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-3 p-5 border-t border-slate-700">
+                <button onClick={fecharModal}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm transition-colors">
+                  Cancelar
+                </button>
+                <button onClick={save} disabled={loading}
+                  className="flex-1 bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-white py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                  {loading && <Loader2 size={14} className="animate-spin" />}
+                  Salvar
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
