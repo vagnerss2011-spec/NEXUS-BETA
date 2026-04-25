@@ -14,8 +14,8 @@ function PrivateRoute({ children }) {
   return localStorage.getItem('token') ? children : <Navigate to="/login" replace />
 }
 
-// Admin master precisa ter escolhido uma empresa antes de abrir Devices/Backups/Users
-// (Dashboard não exige — sem empresa mostra visão agregada de todas)
+// Admin master precisa ter escolhido uma empresa antes de abrir Devices/Backups
+// (Dashboard e Users não exigem — Dashboard mostra visão agregada; Users lista todas as empresas)
 function RequireEmpresa({ children }) {
   const user = getUser()
   const emp = getCurrentEmpresa()
@@ -36,7 +36,7 @@ export default function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="devices" element={<RequireEmpresa><Devices /></RequireEmpresa>} />
           <Route path="backups" element={<RequireEmpresa><Backups /></RequireEmpresa>} />
-          <Route path="users" element={<RequireEmpresa><Users /></RequireEmpresa>} />
+          <Route path="users" element={<Users />} />
           <Route path="logs" element={<Logs />} />
           <Route path="settings" element={<Settings />} />
         </Route>
