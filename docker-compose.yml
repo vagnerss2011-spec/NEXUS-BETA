@@ -61,3 +61,11 @@ services:
 
 volumes:
   pgdata:
+
+# IPv6 habilitado: necessário para o backend conseguir abrir conexão SSH em
+# dispositivos com endereço IPv6 (ex.: links BGP ISP). Requer também
+# /etc/docker/daemon.json com "ipv6": true e "ip6tables": true.
+networks:
+  default:
+    driver: bridge
+    enable_ipv6: true

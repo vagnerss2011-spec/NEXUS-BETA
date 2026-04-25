@@ -169,7 +169,21 @@ def run_backup(device: Device) -> tuple[str, str]:
     except NetmikoAuthenticationException:
         return "falha", "Falha de autenticação: usuário ou senha incorretos"
 
-    except NetmikoTimeoutException:
+    except NetmikoTimeoutException as e:
+        # Netmiko empacota qualquer falha de socket (network unreachable, conexão
+        # recusada, port filtered) em NetmikoTimeoutException. Tenta dar uma
+        # mensagem útil em vez do "Timeout" genérico que confunde diagnóstico.
+        msg = str(e).lower()
+        if "network is unreachable" in msg or "no route to host" in msg:
+            return "falha", (
+                f"Rota indisponível para {device.ip}: o backend não consegue alcançar esse endereço. "
+                "Verifique a conectividade da rede do servidor (ex.: IPv6 habilitado se for endereço v6)."
+            )
+        if "tcp connection to device failed" in msg:
+            return "falha", (
+                f"Conexão TCP falhou com {device.ip}:{device.porta} — "
+                "verifique IP, porta, firewall intermediário e se o serviço SSH está ativo no equipamento."
+            )
         return "falha", f"Timeout: {device.ip} não respondeu no tempo esperado (30s)"
 
     except SSHException as e:
