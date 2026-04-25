@@ -46,11 +46,12 @@ async def lifespan(app: FastAPI):
             REFERENCES empresas(id) ON DELETE CASCADE
         """))
 
-        # 5) Cria empresa default "Empresa de Testes" se não existir
+        # 5) Bootstrap: cria empresa default APENAS se a tabela estiver vazia.
+        # Evita ressuscitar a "Empresa de Testes" depois que o admin já apagou em produção.
         await conn.execute(text("""
             INSERT INTO empresas (nome, cnpj, ativo)
             SELECT 'Empresa de Testes', NULL, TRUE
-            WHERE NOT EXISTS (SELECT 1 FROM empresas WHERE nome = 'Empresa de Testes')
+            WHERE NOT EXISTS (SELECT 1 FROM empresas)
         """))
 
         # 6) Migra dispositivos órfãos para a empresa de testes
