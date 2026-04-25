@@ -108,6 +108,57 @@ def _run_datacom_netmiko(device: Device, senha: str) -> tuple[str, str]:
         return "falha", "Sem resposta do equipamento"
     return "sucesso", cleaned
 
+def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
+    """Huawei VRP: prompts dinâmicos (<AS123-BGP>) e configs grandes quebram o
+    send_command padrão. Usa o mesmo loop manual do datacom — desabilita
+    paginação, lê em chunks até idle, trata --More--."""
+    is_telnet = device.protocolo == Protocolo.telnet
+    conn = {
+        "device_type": "huawei_telnet" if is_telnet else "huawei",
+        "host": _clean_host(device.ip),
+        "port": device.porta,
+        "username": device.usuario_ssh,
+        "password": senha,
+        "timeout": 30,
+        "conn_timeout": 30,
+        "banner_timeout": 20,
+        "blocking_timeout": 60,
+    }
+    with ConnectHandler(**conn) as net:
+        for disable_cmd in ("screen-length 0 temporary", "screen-length disable"):
+            try:
+                net.send_command_timing(disable_cmd, delay_factor=2)
+            except Exception:
+                pass
+        net.write_channel("display current-configuration\n")
+        output = ""
+        start = time.time()
+        last_data = time.time()
+        TOTAL_TIMEOUT = 600
+        IDLE_TIMEOUT = 8.0
+        while True:
+            now = time.time()
+            if now - start > TOTAL_TIMEOUT:
+                break
+            chunk = net.read_channel()
+            if chunk:
+                output += chunk
+                last_data = now
+                if _MORE_RE.search(output[-400:]):
+                    net.write_channel(" ")
+                    output = _MORE_RE.sub("", output)
+            else:
+                if now - last_data > IDLE_TIMEOUT:
+                    break
+                time.sleep(0.3)
+
+    cleaned = _ANSI_RE.sub("", output)
+    cleaned = _MORE_RE.sub("", cleaned)
+    cleaned = cleaned.replace("\x08", "").replace("\r", "")
+    if not cleaned.strip():
+        return "falha", "Sem resposta do equipamento"
+    return "sucesso", cleaned
+
 def _run_mikrotik_paramiko(device: Device, senha: str) -> tuple[str, str]:
     client = SSHClient()
     client.set_missing_host_key_policy(AutoAddPolicy())
@@ -142,6 +193,9 @@ def run_backup(device: Device) -> tuple[str, str]:
 
         if device.fabricante == DeviceVendor.datacom:
             return _run_datacom_netmiko(device, senha)
+
+        if device.fabricante == DeviceVendor.huawei:
+            return _run_huawei_netmiko(device, senha)
 
         type_map = DEVICE_TYPES_TELNET if is_telnet else DEVICE_TYPES_SSH
         conn = {
