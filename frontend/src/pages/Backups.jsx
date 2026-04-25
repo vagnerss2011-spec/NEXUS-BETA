@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Folder, FolderOpen, ChevronRight, Router } from 'lucide-react'
+import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Folder, FolderOpen, ChevronRight, Router, AlertTriangle } from 'lucide-react'
+
+// Quando um backup novo tem tamanho < ALERTA_RATIO × tamanho do anterior bem-sucedido,
+// marca em laranja: pode indicar coleta truncada/corrompida (config crescer e diminuir
+// drasticamente é bem incomum em equipamentos de rede).
+const ALERTA_RATIO = 0.5
+
+function formatarTamanho(bytes) {
+  if (!bytes && bytes !== 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
 import api from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -74,6 +86,27 @@ export default function Backups() {
       g.sucessos = g.backups.filter(b => b.status === 'sucesso').length
       g.falhas = g.backups.filter(b => b.status === 'falha').length
       g.ultimo = g.backups[0]
+
+      // Tamanho de cada backup + flag de "redução suspeita" comparando com o
+      // backup bem-sucedido IMEDIATAMENTE anterior (mais antigo) do mesmo device.
+      // backups está em DESC (índice 0 = mais novo), então procuramos j > i.
+      for (let i = 0; i < g.backups.length; i++) {
+        const cur = g.backups[i]
+        cur.tamanho_bytes = cur.conteudo?.length ?? 0
+        cur.alerta_tamanho = false
+        if (cur.status !== 'sucesso' || cur.tamanho_bytes === 0) continue
+        for (let j = i + 1; j < g.backups.length; j++) {
+          const prev = g.backups[j]
+          if (prev.status !== 'sucesso') continue
+          const prevSize = prev.conteudo?.length ?? 0
+          if (prevSize > 0 && cur.tamanho_bytes < ALERTA_RATIO * prevSize) {
+            cur.alerta_tamanho = true
+            cur.alerta_anterior_bytes = prevSize
+          }
+          break  // só compara com o sucesso imediatamente anterior
+        }
+      }
+      g.tem_alerta = g.backups.some(b => b.alerta_tamanho)
     }
     arr.sort((a, b) => {
       const da = a.ultimo ? new Date(a.ultimo.criado_em).getTime() : 0
@@ -190,6 +223,12 @@ export default function Backups() {
                     )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
+                    {g.tem_alerta && (
+                      <span className="text-xs text-orange-400 font-medium flex items-center gap-1"
+                        title="Algum backup teve redução suspeita de tamanho — pode estar truncado/corrompido">
+                        <AlertTriangle size={13} /> atenção
+                      </span>
+                    )}
                     {g.sucessos > 0 && (
                       <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
                         <CheckCircle size={13} /> {g.sucessos}
@@ -213,17 +252,32 @@ export default function Backups() {
                         <tr className="border-b border-slate-700/50 text-slate-500 text-left text-xs">
                           <th className="px-5 py-2 font-medium">Data/Hora</th>
                           <th className="px-5 py-2 font-medium">Status</th>
+                          <th className="px-5 py-2 font-medium">Tamanho</th>
                           <th className="px-5 py-2 font-medium">Erro</th>
                           <th className="px-5 py-2 font-medium text-right">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700/50">
                         {g.backups.map(b => (
-                          <tr key={b.id} className="hover:bg-slate-700/30 transition-colors">
+                          <tr key={b.id}
+                            className={`transition-colors ${b.alerta_tamanho ? 'bg-orange-500/5 hover:bg-orange-500/10' : 'hover:bg-slate-700/30'}`}>
                             <td className="px-5 py-3 text-slate-300 text-xs font-mono whitespace-nowrap">
                               {new Date(b.criado_em).toLocaleString('pt-BR')}
                             </td>
                             <td className="px-5 py-3"><StatusBadge status={b.status} /></td>
+                            <td className="px-5 py-3 text-xs whitespace-nowrap">
+                              {b.status === 'sucesso' ? (
+                                <span className={`inline-flex items-center gap-1 ${b.alerta_tamanho ? 'text-orange-400 font-medium' : 'text-slate-300'}`}
+                                  title={b.alerta_tamanho
+                                    ? `Atenção: backup com ${formatarTamanho(b.tamanho_bytes)} é menos da metade do anterior bem-sucedido (${formatarTamanho(b.alerta_anterior_bytes)}). Pode estar truncado ou corrompido.`
+                                    : `${b.tamanho_bytes.toLocaleString('pt-BR')} bytes`}>
+                                  {b.alerta_tamanho && <AlertTriangle size={13} />}
+                                  {formatarTamanho(b.tamanho_bytes)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
+                            </td>
                             <td className="px-5 py-3 text-xs text-red-400 max-w-md truncate">{b.erro || '—'}</td>
                             <td className="px-5 py-3 text-right">
                               <div className="flex items-center gap-1 justify-end">
