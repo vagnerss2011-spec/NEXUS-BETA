@@ -35,6 +35,12 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Bloqueio de probes de exploit — bots de massa, sem tráfego legítimo aqui.
+    # 444 = drop da conexão sem resposta (economiza CPU e ruído nos logs).
+    location ~ /\.(git|svn|env|htaccess|htpasswd) { return 444; }
+    location ~* \.(php|aspx?|jsp|cgi)$            { return 444; }
+    location ~ ^/(cgi-bin|vendor|phpunit|wp-admin|wp-content|wp-login|wp-includes|administrator|hello\.world|server-(status|info))(/|$) { return 444; }
+
     location /api/ {
         proxy_pass http://backend:8000/api/;
         proxy_set_header Host              $host;
