@@ -373,8 +373,8 @@ export default function Devices() {
 
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-md">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+          <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-md max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="font-semibold text-white">
                   {modal === 'new' ? 'Novo Dispositivo' : 'Editar Dispositivo'}
@@ -387,7 +387,7 @@ export default function Devices() {
               </div>
               <button onClick={fecharModal} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
               {[
                 { label: 'Nome', key: 'nome', placeholder: 'Router-Core-SP' },
                 { label: 'IP (IPv4 ou IPv6)', key: 'ip', placeholder: '192.168.1.1 ou 2001:db8::1' },
@@ -540,7 +540,7 @@ export default function Devices() {
               </div>
             </div>
             {confirmandoFab ? (
-              <div className="p-5 border-t border-slate-700 bg-amber-500/5">
+              <div className="p-5 border-t border-slate-700 bg-amber-500/5 shrink-0">
                 <div className="flex items-start gap-3 mb-4">
                   <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
                   <div className="text-sm">
@@ -566,7 +566,7 @@ export default function Devices() {
                 </div>
               </div>
             ) : (
-              <div className="flex gap-3 p-5 border-t border-slate-700">
+              <div className="flex gap-3 p-5 border-t border-slate-700 shrink-0">
                 <button onClick={fecharModal}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm transition-colors">
                   Cancelar
