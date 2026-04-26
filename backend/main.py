@@ -23,6 +23,19 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS 'backup_removido'"))
         except Exception:
             pass
+        # Cria o enum authmethod (idempotente). NOT EXISTS no CREATE TYPE
+        # ainda não existe no Postgres, então usamos DO $$ BEGIN ... END$$.
+        try:
+            await conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'authmethod') THEN
+                        CREATE TYPE authmethod AS ENUM ('password', 'ssh_key');
+                    END IF;
+                END$$;
+            """))
+        except Exception:
+            pass
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -82,6 +95,32 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("""
             ALTER TABLE configuracoes
             ADD COLUMN IF NOT EXISTS log_retention_days INTEGER NOT NULL DEFAULT 30
+        """))
+
+        # 8.1) devices: campos de autenticação por chave SSH
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS auth_method authmethod NOT NULL DEFAULT 'password'
+        """))
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS chave_privada_enc TEXT
+        """))
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS chave_passphrase_enc TEXT
+        """))
+        # senha_ssh_enc precisa virar nullable (devices que usam chave não têm senha)
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='devices' AND column_name='senha_ssh_enc' AND is_nullable='NO'
+                ) THEN
+                    ALTER TABLE devices ALTER COLUMN senha_ssh_enc DROP NOT NULL;
+                END IF;
+            END$$;
         """))
 
         # 9) devices.tipo (enum devicetipo, default 'roteador')

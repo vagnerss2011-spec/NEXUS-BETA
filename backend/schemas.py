@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from datetime import datetime
-from models import UserRole, DeviceVendor, Protocolo, DeviceTipo, TipoAtividade
+from models import UserRole, DeviceVendor, Protocolo, DeviceTipo, TipoAtividade, AuthMethod
 
 
 def _normalize_ip(v: Optional[str]) -> Optional[str]:
@@ -90,7 +90,10 @@ class DeviceCreate(BaseModel):
     tipo: DeviceTipo = DeviceTipo.roteador
     protocolo: Protocolo = Protocolo.ssh
     usuario_ssh: str
-    senha_ssh: str
+    auth_method: AuthMethod = AuthMethod.password
+    senha_ssh: Optional[str] = None
+    chave_privada: Optional[str] = None      # PEM/OpenSSH em texto puro; o router cifra antes de salvar
+    chave_passphrase: Optional[str] = None
     empresa_id: Optional[int] = None  # exigido p/ admin master; ignorado p/ demais (usa a do token)
 
     @field_validator("ip")
@@ -106,7 +109,10 @@ class DeviceUpdate(BaseModel):
     tipo: Optional[DeviceTipo] = None
     protocolo: Optional[Protocolo] = None
     usuario_ssh: Optional[str] = None
+    auth_method: Optional[AuthMethod] = None
     senha_ssh: Optional[str] = None
+    chave_privada: Optional[str] = None
+    chave_passphrase: Optional[str] = None
     ativo: Optional[bool] = None
     empresa_id: Optional[int] = None  # só admin master pode mover entre empresas
 
@@ -124,6 +130,7 @@ class DeviceOut(BaseModel):
     tipo: DeviceTipo
     protocolo: Protocolo
     usuario_ssh: str
+    auth_method: AuthMethod = AuthMethod.password
     ativo: bool
     empresa_id: int
     criado_em: datetime

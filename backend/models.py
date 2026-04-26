@@ -24,6 +24,10 @@ class Protocolo(str, enum.Enum):
     ssh = "ssh"
     telnet = "telnet"
 
+class AuthMethod(str, enum.Enum):
+    password = "password"
+    ssh_key = "ssh_key"
+
 class DeviceTipo(str, enum.Enum):
     roteador = "roteador"
     olt = "olt"
@@ -72,7 +76,11 @@ class Device(Base):
     tipo = Column(Enum(DeviceTipo), default=DeviceTipo.roteador, nullable=False)
     protocolo = Column(Enum(Protocolo), default=Protocolo.ssh, nullable=False)
     usuario_ssh = Column(String(100), nullable=False)
-    senha_ssh_enc = Column(Text, nullable=False)
+    # senha agora é nullable porque o device pode autenticar via chave SSH
+    senha_ssh_enc = Column(Text, nullable=True)
+    auth_method = Column(Enum(AuthMethod), default=AuthMethod.password, nullable=False)
+    chave_privada_enc = Column(Text, nullable=True)      # PEM/OpenSSH cifrado com Fernet
+    chave_passphrase_enc = Column(Text, nullable=True)   # opcional, p/ chaves protegidas
     ativo = Column(Boolean, default=True)
     empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_db
-from models import Device, Empresa, User, UserRole, Backup, TipoAtividade
+from models import Device, Empresa, User, UserRole, Backup, TipoAtividade, AuthMethod
 from auth import require_role, get_current_user, is_master, ensure_empresa_access
 from schemas import DeviceCreate, DeviceUpdate, DeviceOut
 from services.crypto import encrypt
+from services.ssh_service import load_pkey
 from services import audit
+from paramiko.ssh_exception import SSHException
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
@@ -53,6 +55,16 @@ async def listar_devices(
     ultimos = await _ultimos_backups_map(db, [d.id for d in devices])
     return [_to_out(d, ultimos) for d in devices]
 
+def _validar_chave_ou_400(pem: str, passphrase: Optional[str]) -> None:
+    """Tenta carregar a chave; rejeita o request com mensagem clara se não bater."""
+    try:
+        load_pkey(pem, passphrase)
+    except SSHException as e:
+        raise HTTPException(status_code=400, detail=f"Chave SSH inválida: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Chave SSH inválida: {e}")
+
+
 @router.post("/", response_model=DeviceOut,
              dependencies=[Depends(require_role(UserRole.admin, UserRole.admin_empresa, UserRole.operador))])
 async def criar_device(
@@ -64,11 +76,30 @@ async def criar_device(
     empresa_id = ensure_empresa_access(user, data.empresa_id)
     if not await _empresa_exists(db, empresa_id):
         raise HTTPException(status_code=404, detail="Empresa não encontrada")
+
+    # Valida combinação de método de autenticação x credenciais fornecidas.
+    if data.auth_method == AuthMethod.ssh_key:
+        if not data.chave_privada or not data.chave_privada.strip():
+            raise HTTPException(status_code=400, detail="Chave privada é obrigatória quando o método é 'ssh_key'")
+        _validar_chave_ou_400(data.chave_privada, data.chave_passphrase)
+        senha_enc = None
+        chave_enc = encrypt(data.chave_privada)
+        passphrase_enc = encrypt(data.chave_passphrase) if data.chave_passphrase else None
+    else:
+        if not data.senha_ssh:
+            raise HTTPException(status_code=400, detail="Senha é obrigatória quando o método é 'password'")
+        senha_enc = encrypt(data.senha_ssh)
+        chave_enc = None
+        passphrase_enc = None
+
     device = Device(
         nome=data.nome, ip=data.ip, porta=data.porta,
         fabricante=data.fabricante, tipo=data.tipo, protocolo=data.protocolo,
         usuario_ssh=data.usuario_ssh,
-        senha_ssh_enc=encrypt(data.senha_ssh),
+        auth_method=data.auth_method,
+        senha_ssh_enc=senha_enc,
+        chave_privada_enc=chave_enc,
+        chave_passphrase_enc=passphrase_enc,
         empresa_id=empresa_id,
     )
     db.add(device)
@@ -105,8 +136,31 @@ async def atualizar_device(
     else:
         update.pop("empresa_id", None)
 
-    if "senha_ssh" in update:
-        device.senha_ssh_enc = encrypt(update.pop("senha_ssh"))
+    # Determina o método final (após esse update) e garante credencial coerente.
+    novo_method = update.get("auth_method", device.auth_method)
+    nova_chave = update.get("chave_privada")
+    nova_chave_tem_valor = nova_chave is not None and nova_chave.strip() != ""
+
+    if novo_method == AuthMethod.ssh_key:
+        if nova_chave_tem_valor:
+            _validar_chave_ou_400(nova_chave, update.get("chave_passphrase"))
+            device.chave_privada_enc = encrypt(nova_chave)
+        # Se está mudando pra ssh_key e não tem nem chave nova nem chave já salva, exige chave.
+        if device.auth_method != AuthMethod.ssh_key and not device.chave_privada_enc:
+            raise HTTPException(status_code=400, detail="Para mudar para chave SSH, envie a chave privada")
+        # Atualiza/limpa passphrase se foi enviada no payload
+        if "chave_passphrase" in update:
+            pp = update.get("chave_passphrase")
+            device.chave_passphrase_enc = encrypt(pp) if pp else None
+    elif novo_method == AuthMethod.password:
+        if "senha_ssh" in update and update.get("senha_ssh"):
+            device.senha_ssh_enc = encrypt(update.get("senha_ssh"))
+        if device.auth_method != AuthMethod.password and not device.senha_ssh_enc:
+            raise HTTPException(status_code=400, detail="Para mudar para senha, envie a senha")
+
+    # Os campos sensíveis já foram processados acima; remove pra não atribuir via setattr.
+    for k in ("senha_ssh", "chave_privada", "chave_passphrase"):
+        update.pop(k, None)
     for field, value in update.items():
         setattr(device, field, value)
     await db.commit()

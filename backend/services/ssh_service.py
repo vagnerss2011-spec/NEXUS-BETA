@@ -1,12 +1,31 @@
 import re
 import time
+import io
+import paramiko
 from netmiko import ConnectHandler
 from netmiko.exceptions import NetmikoTimeoutException, NetmikoAuthenticationException
 from paramiko import SSHClient, AutoAddPolicy
-from paramiko.ssh_exception import SSHException, AuthenticationException as ParamikoAuthError
+from paramiko.ssh_exception import SSHException, AuthenticationException as ParamikoAuthError, PasswordRequiredException
 from socket import timeout as SocketTimeout, gaierror as SocketGAIError
-from models import Device, DeviceVendor, Protocolo
+from models import Device, DeviceVendor, Protocolo, AuthMethod
 from services.crypto import decrypt
+
+
+def load_pkey(pem: str, passphrase: str | None = None) -> paramiko.PKey:
+    """Carrega uma chave privada (RSA/Ed25519/ECDSA/DSA) em formato OpenSSH ou PEM
+    a partir de uma string em memória. Tenta cada classe na ordem mais comum."""
+    pwd = passphrase if passphrase else None
+    last_err: Exception | None = None
+    for cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey, paramiko.DSSKey):
+        try:
+            return cls.from_private_key(io.StringIO(pem), password=pwd)
+        except PasswordRequiredException:
+            # chave protegida por passphrase, mas não enviamos uma — propaga já
+            raise
+        except SSHException as e:
+            last_err = e
+            continue
+    raise SSHException(f"Formato de chave privada não reconhecido: {last_err}")
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 # Casa o More prompt + espaços adjacentes na MESMA linha. Inclui o padding
@@ -78,6 +97,34 @@ def _clean_host(ip: str) -> str:
         s = s[1:-1].strip()
     return s
 
+def _build_auth_kwargs(device: Device) -> dict:
+    """Monta o dict de auth pro Netmiko/Paramiko a partir do método configurado.
+    Caller deve fazer ** nesse dict junto com host/port/username/timeouts."""
+    if device.auth_method == AuthMethod.ssh_key:
+        if not device.chave_privada_enc:
+            raise SSHException("Dispositivo configurado para chave SSH mas sem chave cadastrada")
+        pem = decrypt(device.chave_privada_enc)
+        passphrase = decrypt(device.chave_passphrase_enc) if device.chave_passphrase_enc else None
+        pkey = load_pkey(pem, passphrase)
+        # use_keys=True + pkey faz o Netmiko/Paramiko usar a chave em memória
+        # e ignorar tentativa de senha. allow_agent/look_for_keys=False evita
+        # vazamento pra chaves do sistema do servidor.
+        return {
+            "pkey": pkey,
+            "use_keys": True,
+            "allow_agent": False,
+            "key_file": None,
+        }
+    # password
+    if not device.senha_ssh_enc:
+        raise SSHException("Dispositivo configurado para senha mas sem senha cadastrada")
+    return {
+        "password": decrypt(device.senha_ssh_enc),
+        "allow_agent": False,
+        "use_keys": False,
+    }
+
+
 def _is_telnet_banner_error(msg: str) -> bool:
     msg_lower = msg.lower()
     return (
@@ -87,18 +134,18 @@ def _is_telnet_banner_error(msg: str) -> bool:
         or "invalid start byte" in msg_lower
     )
 
-def _run_datacom_netmiko(device: Device, senha: str) -> tuple[str, str]:
+def _run_datacom_netmiko(device: Device) -> tuple[str, str]:
     is_telnet = device.protocolo == Protocolo.telnet
     conn = {
         "device_type": "cisco_ios_telnet" if is_telnet else "cisco_ios",
         "host": _clean_host(device.ip),
         "port": device.porta,
         "username": device.usuario_ssh,
-        "password": senha,
         "timeout": 30,
         "conn_timeout": 30,
         "banner_timeout": 20,
         "blocking_timeout": 60,
+        **_build_auth_kwargs(device),
     }
     with ConnectHandler(**conn) as net:
         for disable_cmd in ("terminal length 0", "screen-length 0 temporary", "screen-length 0"):
@@ -138,7 +185,7 @@ def _run_datacom_netmiko(device: Device, senha: str) -> tuple[str, str]:
         return "falha", "Sem resposta do equipamento"
     return "sucesso", cleaned
 
-def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
+def _run_huawei_netmiko(device: Device) -> tuple[str, str]:
     """Huawei VRP: prompts dinâmicos (<AS123-BGP>) e configs grandes quebram o
     send_command padrão. Usa o mesmo loop manual do datacom — desabilita
     paginação, lê em chunks até idle, trata --More--."""
@@ -148,11 +195,11 @@ def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
         "host": _clean_host(device.ip),
         "port": device.porta,
         "username": device.usuario_ssh,
-        "password": senha,
         "timeout": 30,
         "conn_timeout": 30,
         "banner_timeout": 20,
         "blocking_timeout": 60,
+        **_build_auth_kwargs(device),
     }
     with ConnectHandler(**conn) as net:
         for disable_cmd in ("screen-length 0 temporary", "screen-length disable"):
@@ -192,21 +239,31 @@ def _run_huawei_netmiko(device: Device, senha: str) -> tuple[str, str]:
         return "falha", "Sem resposta do equipamento"
     return "sucesso", cleaned
 
-def _run_mikrotik_paramiko(device: Device, senha: str) -> tuple[str, str]:
+def _run_mikrotik_paramiko(device: Device) -> tuple[str, str]:
     client = SSHClient()
     client.set_missing_host_key_policy(AutoAddPolicy())
+    connect_kwargs: dict = dict(
+        hostname=_clean_host(device.ip),
+        port=device.porta,
+        username=device.usuario_ssh,
+        timeout=30,
+        banner_timeout=20,
+        auth_timeout=30,
+        look_for_keys=False,
+        allow_agent=False,
+    )
+    if device.auth_method == AuthMethod.ssh_key:
+        if not device.chave_privada_enc:
+            return "falha", "Dispositivo configurado para chave SSH mas sem chave cadastrada"
+        pem = decrypt(device.chave_privada_enc)
+        passphrase = decrypt(device.chave_passphrase_enc) if device.chave_passphrase_enc else None
+        connect_kwargs["pkey"] = load_pkey(pem, passphrase)
+    else:
+        if not device.senha_ssh_enc:
+            return "falha", "Dispositivo configurado para senha mas sem senha cadastrada"
+        connect_kwargs["password"] = decrypt(device.senha_ssh_enc)
     try:
-        client.connect(
-            hostname=_clean_host(device.ip),
-            port=device.porta,
-            username=device.usuario_ssh,
-            password=senha,
-            timeout=30,
-            banner_timeout=20,
-            auth_timeout=30,
-            look_for_keys=False,
-            allow_agent=False,
-        )
+        client.connect(**connect_kwargs)
         _, stdout, stderr = client.exec_command("/export", timeout=60)
         output = stdout.read().decode("utf-8", errors="replace")
         if not output.strip():
@@ -217,18 +274,19 @@ def _run_mikrotik_paramiko(device: Device, senha: str) -> tuple[str, str]:
         client.close()
 
 def run_backup(device: Device) -> tuple[str, str]:
+    is_telnet = device.protocolo == Protocolo.telnet
+    # Telnet só suporta senha. Falha cedo para evitar erros confusos.
+    if is_telnet and device.auth_method == AuthMethod.ssh_key:
+        return "falha", "Telnet não suporta autenticação por chave SSH — altere o protocolo para SSH ou use senha."
     try:
-        senha = decrypt(device.senha_ssh_enc)
-        is_telnet = device.protocolo == Protocolo.telnet
-
         if device.fabricante == DeviceVendor.mikrotik and not is_telnet:
-            return _run_mikrotik_paramiko(device, senha)
+            return _run_mikrotik_paramiko(device)
 
         if device.fabricante == DeviceVendor.datacom:
-            return _run_datacom_netmiko(device, senha)
+            return _run_datacom_netmiko(device)
 
         if device.fabricante == DeviceVendor.huawei:
-            return _run_huawei_netmiko(device, senha)
+            return _run_huawei_netmiko(device)
 
         type_map = DEVICE_TYPES_TELNET if is_telnet else DEVICE_TYPES_SSH
         conn = {
@@ -236,11 +294,11 @@ def run_backup(device: Device) -> tuple[str, str]:
             "host": _clean_host(device.ip),
             "port": device.porta,
             "username": device.usuario_ssh,
-            "password": senha,
             "timeout": 30,
             "conn_timeout": 30,
             "banner_timeout": 20,
             "blocking_timeout": 60,
+            **_build_auth_kwargs(device),
         }
         with ConnectHandler(**conn) as net:
             command = COMMANDS.get(device.fabricante, "show running-config")
@@ -250,10 +308,17 @@ def run_backup(device: Device) -> tuple[str, str]:
             return "falha", "Sem resposta do equipamento"
         return "sucesso", output
 
+    except PasswordRequiredException:
+        return "falha", "Chave SSH é protegida por passphrase — preencha o campo Passphrase no dispositivo."
+
     except ParamikoAuthError:
+        if device.auth_method == AuthMethod.ssh_key:
+            return "falha", "Falha de autenticação: chave SSH rejeitada pelo equipamento (verifique se a chave pública correspondente está cadastrada no dispositivo)"
         return "falha", "Falha de autenticação: usuário ou senha incorretos"
 
     except NetmikoAuthenticationException:
+        if device.auth_method == AuthMethod.ssh_key:
+            return "falha", "Falha de autenticação: chave SSH rejeitada pelo equipamento (verifique se a chave pública correspondente está cadastrada no dispositivo)"
         return "falha", "Falha de autenticação: usuário ou senha incorretos"
 
     except NetmikoTimeoutException as e:

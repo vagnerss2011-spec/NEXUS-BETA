@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle, Key, KeyRound } from 'lucide-react'
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -11,7 +11,7 @@ const TIPOS = [
   { value: 'wireless', label: 'Wireless' },
 ]
 const TIPO_LABEL = Object.fromEntries(TIPOS.map(t => [t.value, t.label]))
-const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '' }
+const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '' }
 const STATUS_FILTROS = [
   { value: 'todos', label: 'Todos os status' },
   { value: 'sucesso', label: 'Backup com sucesso' },
@@ -82,7 +82,17 @@ export default function Devices() {
   useEffect(() => { load() }, [])
 
   function openNew() { setForm(BLANK); setMostrarSenha(false); setConfirmandoFab(false); setModal('new') }
-  function openEdit(d) { setForm({ ...d, protocolo: d.protocolo || 'ssh', senha_ssh: '' }); setMostrarSenha(false); setConfirmandoFab(false); setModal(d.id) }
+  function openEdit(d) {
+    setForm({
+      ...d,
+      protocolo: d.protocolo || 'ssh',
+      auth_method: d.auth_method || 'password',
+      senha_ssh: '',
+      chave_privada: '',
+      chave_passphrase: '',
+    })
+    setMostrarSenha(false); setConfirmandoFab(false); setModal(d.id)
+  }
   function fecharModal() { setModal(null); setConfirmandoFab(false) }
 
   async function save() {
@@ -95,11 +105,33 @@ export default function Devices() {
     }
     setLoading(true)
     try {
-      const payload = { ...form, empresa_id: empresa?.id }
+      // Monta payload limpo: telnet sempre força senha; ssh respeita auth_method
+      const isTelnet = form.protocolo === 'telnet'
+      const authMethod = isTelnet ? 'password' : (form.auth_method || 'password')
+      const payload = {
+        nome: form.nome,
+        ip: form.ip,
+        porta: form.porta,
+        fabricante: form.fabricante,
+        tipo: form.tipo,
+        protocolo: form.protocolo,
+        usuario_ssh: form.usuario_ssh,
+        auth_method: authMethod,
+        empresa_id: empresa?.id,
+      }
+      if (authMethod === 'ssh_key') {
+        if (form.chave_privada && form.chave_privada.trim()) payload.chave_privada = form.chave_privada
+        if (form.chave_passphrase) payload.chave_passphrase = form.chave_passphrase
+      } else {
+        if (form.senha_ssh) payload.senha_ssh = form.senha_ssh
+      }
       if (modal === 'new') await api.post('/devices/', payload)
       else await api.put(`/devices/${modal}`, payload)
       fecharModal()
       load()
+    } catch (err) {
+      const detail = err?.response?.data?.detail || 'Erro ao salvar dispositivo'
+      alert(detail)
     } finally { setLoading(false) }
   }
 
@@ -369,35 +401,102 @@ export default function Devices() {
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors" />
                 </div>
               ))}
-              <div>
-                <label className="block text-sm text-slate-400 mb-1.5">Senha SSH</label>
-                <div className="relative">
-                  <input
-                    type={mostrarSenha ? 'text' : 'password'}
-                    value={form.senha_ssh}
-                    onChange={e => setForm(f => ({ ...f, senha_ssh: e.target.value }))}
-                    placeholder="••••••••"
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-3 pr-10 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setMostrarSenha(v => !v)}
-                    title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-sky-400 transition-colors"
-                  >
-                    {mostrarSenha ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
+              {form.protocolo !== 'telnet' && (
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1.5">Método de autenticação</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { value: 'password', label: 'Senha', icon: KeyRound },
+                      { value: 'ssh_key', label: 'Chave SSH', icon: Key },
+                    ].map(({ value, label, icon: Icon }) => (
+                      <button
+                        type="button"
+                        key={value}
+                        onClick={() => setForm(f => ({ ...f, auth_method: value }))}
+                        className={`flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                          form.auth_method === value
+                            ? 'bg-sky-500/15 border-sky-500 text-sky-300'
+                            : 'bg-slate-900 border-slate-600 text-slate-400 hover:border-slate-500'
+                        }`}
+                      >
+                        <Icon size={14} /> {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={mostrarSenha}
-                    onChange={e => setMostrarSenha(e.target.checked)}
-                    className="accent-sky-500"
-                  />
-                  Mostrar senha
-                </label>
-              </div>
+              )}
+
+              {(form.protocolo === 'telnet' || form.auth_method !== 'ssh_key') && (
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1.5">
+                    Senha {form.protocolo !== 'telnet' && form.auth_method === 'password' ? 'SSH' : ''}
+                    {modal !== 'new' && (
+                      <span className="text-xs text-slate-500 ml-1">(deixe em branco para manter)</span>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={mostrarSenha ? 'text' : 'password'}
+                      value={form.senha_ssh}
+                      onChange={e => setForm(f => ({ ...f, senha_ssh: e.target.value }))}
+                      placeholder="••••••••"
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-3 pr-10 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setMostrarSenha(v => !v)}
+                      title={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-sky-400 transition-colors"
+                    >
+                      {mostrarSenha ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={mostrarSenha}
+                      onChange={e => setMostrarSenha(e.target.checked)}
+                      className="accent-sky-500"
+                    />
+                    Mostrar senha
+                  </label>
+                </div>
+              )}
+
+              {form.protocolo !== 'telnet' && form.auth_method === 'ssh_key' && (
+                <>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">
+                      Chave privada (PEM ou OpenSSH)
+                      {modal !== 'new' && (
+                        <span className="text-xs text-slate-500 ml-1">(deixe em branco para manter)</span>
+                      )}
+                    </label>
+                    <textarea
+                      value={form.chave_privada}
+                      onChange={e => setForm(f => ({ ...f, chave_privada: e.target.value }))}
+                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
+                      rows={6}
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-sky-500 transition-colors resize-y"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Cole o conteúdo do arquivo da chave privada. A chave pública correspondente precisa estar cadastrada no equipamento.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">
+                      Passphrase da chave <span className="text-xs text-slate-500">(opcional)</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={form.chave_passphrase}
+                      onChange={e => setForm(f => ({ ...f, chave_passphrase: e.target.value }))}
+                      placeholder="Deixe vazio se a chave não for protegida"
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors"
+                    />
+                  </div>
+                </>
+              )}
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Tipo de equipamento</label>
                 <select value={form.tipo || 'roteador'} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}
@@ -422,7 +521,13 @@ export default function Devices() {
                         name="protocolo"
                         value={p}
                         checked={form.protocolo === p}
-                        onChange={() => setForm(f => ({ ...f, protocolo: p, porta: f.porta === DEFAULT_PORTS[f.protocolo] ? DEFAULT_PORTS[p] : f.porta }))}
+                        onChange={() => setForm(f => ({
+                          ...f,
+                          protocolo: p,
+                          porta: f.porta === DEFAULT_PORTS[f.protocolo] ? DEFAULT_PORTS[p] : f.porta,
+                          // Telnet não suporta chave SSH — força senha
+                          auth_method: p === 'telnet' ? 'password' : f.auth_method,
+                        }))}
                         className="accent-sky-500"
                       />
                       <span className={`text-sm font-medium ${p === 'telnet' ? 'text-orange-400' : 'text-sky-400'}`}>
