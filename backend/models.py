@@ -38,6 +38,7 @@ class TipoAtividade(str, enum.Enum):
     device_teste_sucesso = "device_teste_sucesso"
     device_teste_falha = "device_teste_falha"
     usuario_criado = "usuario_criado"
+    backup_removido = "backup_removido"
 
 class Empresa(Base):
     __tablename__ = "empresas"

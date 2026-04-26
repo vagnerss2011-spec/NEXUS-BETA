@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Router, Archive, CheckCircle, XCircle, Clock, Activity,
-  LogIn, LogOut, Plus, Play, UserPlus, RefreshCw, Building2, ArrowRight, CircleDashed,
+  LogIn, LogOut, Plus, Play, UserPlus, RefreshCw, Building2, ArrowRight, CircleDashed, Trash2,
 } from 'lucide-react'
 import api, { getCurrentEmpresa, getUser, setCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
@@ -25,9 +25,11 @@ const EVENTOS = {
   login:                 { icon: LogIn,     color: 'text-sky-400',     label: 'Login',             verbo: 'entrou na plataforma' },
   logout:                { icon: LogOut,    color: 'text-slate-400',   label: 'Logout',            verbo: 'saiu da plataforma' },
   device_criado:         { icon: Plus,      color: 'text-emerald-400', label: 'Dispositivo',       verbo: 'adicionou o dispositivo' },
+  device_removido:       { icon: Trash2,    color: 'text-red-400',     label: 'Disp. removido',    verbo: 'removeu o dispositivo' },
   device_teste_sucesso:  { icon: CheckCircle,color:'text-emerald-400', label: 'Teste OK',          verbo: 'executou teste com sucesso em' },
   device_teste_falha:    { icon: XCircle,   color: 'text-red-400',     label: 'Teste falhou',      verbo: 'executou teste com falha em' },
   usuario_criado:        { icon: UserPlus,  color: 'text-violet-400',  label: 'Novo usuário',      verbo: 'criou o usuário' },
+  backup_removido:       { icon: Trash2,    color: 'text-red-400',     label: 'Backup removido',   verbo: 'removeu um backup do' },
 }
 
 function AtividadeItem({ a, mostrarEmpresa }) {

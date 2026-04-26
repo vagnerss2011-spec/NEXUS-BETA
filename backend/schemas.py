@@ -139,6 +139,7 @@ class BackupOut(BaseModel):
     status: str
     conteudo: Optional[str] = None
     erro: Optional[str] = None
+    log_scheduler_id: Optional[int] = None  # NULL = manual; preenchido = automático (scheduler)
     criado_em: datetime
     class Config:
         from_attributes = True

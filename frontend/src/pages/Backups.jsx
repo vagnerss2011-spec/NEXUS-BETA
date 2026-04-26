@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Folder, FolderOpen, ChevronRight, Router, AlertTriangle } from 'lucide-react'
+import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Folder, FolderOpen, ChevronRight, Router, AlertTriangle, Trash2, Clock, User } from 'lucide-react'
 
 // Quando um backup novo tem tamanho < ALERTA_RATIO × tamanho do anterior bem-sucedido,
 // marca em laranja: pode indicar coleta truncada/corrompida (config crescer e diminuir
@@ -24,6 +24,8 @@ export default function Backups() {
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
   const [expandidos, setExpandidos] = useState(() => new Set())
+  const me = JSON.parse(localStorage.getItem('user') || '{}')
+  const canDelete = ['admin', 'admin_empresa'].includes(me.role)
 
   async function load() {
     setLoading(true)
@@ -35,6 +37,17 @@ export default function Backups() {
   }
 
   useEffect(() => { load() }, [])
+
+  async function deletarBackup(b) {
+    const data = new Date(b.criado_em).toLocaleString('pt-BR')
+    if (!confirm(`Apagar este backup de ${data}?\n\nDispositivo: ${b.device?.nome || `#${b.device_id}`}\nEsta ação não pode ser desfeita.`)) return
+    try {
+      await api.delete(`/backups/${b.id}`)
+      load()
+    } catch (err) {
+      alert(`Falha ao apagar: ${err?.response?.data?.detail || err.message}`)
+    }
+  }
 
   async function download(b) {
     const token = localStorage.getItem('token')
@@ -251,6 +264,7 @@ export default function Backups() {
                       <thead>
                         <tr className="border-b border-slate-700/50 text-slate-500 text-left text-xs">
                           <th className="px-5 py-2 font-medium">Data/Hora</th>
+                          <th className="px-5 py-2 font-medium">Origem</th>
                           <th className="px-5 py-2 font-medium">Status</th>
                           <th className="px-5 py-2 font-medium">Tamanho</th>
                           <th className="px-5 py-2 font-medium">Erro</th>
@@ -263,6 +277,19 @@ export default function Backups() {
                             className={`transition-colors ${b.alerta_tamanho ? 'bg-orange-500/5 hover:bg-orange-500/10' : 'hover:bg-slate-700/30'}`}>
                             <td className="px-5 py-3 text-slate-300 text-xs font-mono whitespace-nowrap">
                               {new Date(b.criado_em).toLocaleString('pt-BR')}
+                            </td>
+                            <td className="px-5 py-3 whitespace-nowrap">
+                              {b.log_scheduler_id ? (
+                                <span className="inline-flex items-center gap-1 text-xs bg-sky-500/15 text-sky-300 px-2 py-0.5 rounded font-medium"
+                                  title={`Backup automático (job #${b.log_scheduler_id})`}>
+                                  <Clock size={11} /> Auto
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs bg-violet-500/15 text-violet-300 px-2 py-0.5 rounded font-medium"
+                                  title="Backup disparado manualmente pelo painel">
+                                  <User size={11} /> Manual
+                                </span>
+                              )}
                             </td>
                             <td className="px-5 py-3"><StatusBadge status={b.status} /></td>
                             <td className="px-5 py-3 text-xs whitespace-nowrap">
@@ -291,6 +318,12 @@ export default function Backups() {
                                   <button onClick={() => download(b)}
                                     className="p-1.5 text-sky-400 hover:bg-sky-500/20 rounded transition-colors" title="Baixar backup">
                                     <Download size={15} />
+                                  </button>
+                                )}
+                                {canDelete && (
+                                  <button onClick={() => deletarBackup(b)}
+                                    className="p-1.5 text-red-400 hover:bg-red-500/20 rounded transition-colors" title="Apagar backup">
+                                    <Trash2 size={15} />
                                   </button>
                                 )}
                               </div>

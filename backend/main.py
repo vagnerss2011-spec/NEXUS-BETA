@@ -19,6 +19,10 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS 'device_removido'"))
         except Exception:
             pass
+        try:
+            await conn.execute(text("ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS 'backup_removido'"))
+        except Exception:
+            pass
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

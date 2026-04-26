@@ -89,6 +89,36 @@ async def executar_backup_manual(
     )
     return backup
 
+@router.delete("/{backup_id}", status_code=204,
+               dependencies=[Depends(require_role(UserRole.admin, UserRole.admin_empresa))])
+async def deletar_backup(
+    backup_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Backup).options(selectinload(Backup.device)).where(Backup.id == backup_id)
+    )
+    backup = result.scalar_one_or_none()
+    if not backup:
+        raise HTTPException(status_code=404, detail="Backup não encontrado")
+    ensure_empresa_access(user, backup.device.empresa_id)
+
+    device_nome = backup.device.nome
+    empresa_id = backup.device.empresa_id
+    criado_em = backup.criado_em
+
+    await db.delete(backup)
+    await audit.registrar(
+        db, tipo=TipoAtividade.backup_removido, user=user, request=request,
+        empresa_id=empresa_id,
+        alvo_tipo="device", alvo_nome=device_nome,
+        detalhe=f"backup #{backup_id} de {criado_em.strftime('%d/%m/%Y %H:%M')}",
+    )
+    await db.commit()
+    return None
+
 @router.get("/{backup_id}/download")
 async def download_backup(
     backup_id: int,
