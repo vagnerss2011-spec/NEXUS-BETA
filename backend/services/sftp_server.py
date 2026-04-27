@@ -294,8 +294,13 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
     Validado em 2026-04-27 com Huawei OLT MA5800 (firmware Gaia_X2) — sem
     este patch, paramiko 4.0 quebra o handshake com erro:
     'Expecting packet from (30,), got 34' (cliente VRP força DH-GEX-sha1).
+
+    Implementação: paramiko 4.0 tornou as properties preferred_* read-only.
+    A forma correta de configurar listas de algoritmos é via
+    get_security_options() (digests = MACs, key_types = host key + pubkey).
     """
-    transport.preferred_kex = (
+    opts = transport.get_security_options()
+    opts.kex = (
         # Modernos (preferidos)
         "curve25519-sha256",
         "curve25519-sha256@libssh.org",
@@ -310,7 +315,7 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
         "diffie-hellman-group14-sha1",
         "diffie-hellman-group1-sha1",
     )
-    transport.preferred_ciphers = (
+    opts.ciphers = (
         # Modernos
         "aes128-ctr", "aes192-ctr", "aes256-ctr",
         "aes128-gcm@openssh.com", "aes256-gcm@openssh.com",
@@ -318,7 +323,8 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
         "aes128-cbc", "aes192-cbc", "aes256-cbc",
         "3des-cbc",
     )
-    transport.preferred_macs = (
+    # 'digests' no paramiko = MACs (HMACs aplicados após cifra)
+    opts.digests = (
         # Modernos
         "hmac-sha2-256-etm@openssh.com",
         "hmac-sha2-512-etm@openssh.com",
@@ -330,11 +336,13 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
         "hmac-md5",
         "hmac-md5-96",
     )
-    transport.preferred_pubkeys = (
+    # 'key_types' = algoritmos de assinatura aceitos para host key / client pubkey.
+    # Inclui ssh-rsa (SHA-1) porque alguns VRP só assinam com isso.
+    opts.key_types = (
         "ssh-ed25519",
         "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
         "rsa-sha2-512", "rsa-sha2-256",
-        "ssh-rsa",  # SHA-1 — alguns VRP só assinam com isso
+        "ssh-rsa",
     )
 
 
