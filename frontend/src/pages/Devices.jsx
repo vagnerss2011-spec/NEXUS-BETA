@@ -20,6 +20,79 @@ const STATUS_FILTROS = [
 ]
 const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21 }
 const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push' }
+
+// Exemplos de configuração para o equipamento enviar backup via FTP.
+// Placeholders <SERVIDOR>, <USUARIO>, <SENHA> são substituídos no modal pós-save.
+// Templates são iniciais — admin deve adaptar nome de arquivo, intervalo e
+// nuances do firmware específico.
+const FTP_EXAMPLES = {
+  mikrotik: {
+    titulo: 'Mikrotik RouterOS',
+    cmd: `/system scheduler add name=backup-nexus interval=1d \\
+  on-event="/export file=cfg-backup; \\
+            /tool fetch upload=yes mode=ftp \\
+              address=<SERVIDOR> port=21 \\
+              user=<USUARIO> password=<SENHA> \\
+              src-path=cfg-backup.rsc \\
+              dst-path=backup-mikrotik.rsc"`,
+  },
+  huawei: {
+    titulo: 'Huawei VRP',
+    cmd: `# Salva config corrente em flash e envia via FTP.
+# Em alguns equipamentos use 'tftp' ou 'sftp' se FTP estiver desabilitado.
+save
+backup configuration to ftp <SERVIDOR> <USUARIO> <SENHA> backup-huawei.cfg`,
+  },
+  ubiquiti: {
+    titulo: 'Ubiquiti EdgeOS',
+    cmd: `configure
+set system config-management commit-archive location \\
+    "ftp://<USUARIO>:<SENHA>@<SERVIDOR>/"
+commit ; save ; exit`,
+  },
+  intelbras: {
+    titulo: 'Intelbras (CLI tipo Cisco)',
+    cmd: `# Pode variar pelo modelo. Em equipamentos Cisco-like:
+copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-intelbras.cfg`,
+  },
+  datacom: {
+    titulo: 'Datacom DmOS',
+    cmd: `copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-datacom.cfg`,
+  },
+  cisco: {
+    titulo: 'Cisco IOS / IOS-XE',
+    cmd: `# Modo simples (manual ou via EEM applet diário):
+copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-cisco.cfg
+
+# Modo automático com archive:
+configure terminal
+ archive
+  path ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-cisco
+  write-memory
+  time-period 1440
+end`,
+  },
+  juniper: {
+    titulo: 'Juniper JunOS',
+    cmd: `set system archival configuration archive-sites \\
+    "ftp://<USUARIO>:<SENHA>@<SERVIDOR>" transfer-on-commit
+commit`,
+  },
+  outro: {
+    titulo: 'Outro fabricante',
+    cmd: `# Comando genérico — adapte ao manual do equipamento:
+# Conectar, autenticar e enviar arquivo de config para:
+#   ftp://<USUARIO>:<SENHA>@<SERVIDOR>:21/<nome-do-backup>.cfg`,
+  },
+}
+
+function montarExemploFtp(fabricante, servidor, usuario, senha) {
+  const tpl = FTP_EXAMPLES[fabricante] || FTP_EXAMPLES.outro
+  return tpl.cmd
+    .replaceAll('<SERVIDOR>', servidor || '<SERVIDOR>')
+    .replaceAll('<USUARIO>', usuario || '<USUARIO>')
+    .replaceAll('<SENHA>', senha || '<SENHA>')
+}
 const formatHostPort = (ip, porta) => {
   if (!ip) return ''
   return ip.includes(':') ? `[${ip}]:${porta}` : `${ip}:${porta}`
@@ -84,6 +157,10 @@ export default function Devices() {
   useEffect(() => { load() }, [])
 
   function openNew() { setForm(BLANK); setMostrarSenha(false); setConfirmandoFab(false); setModal('new') }
+  function openNewFtp() {
+    setForm({ ...BLANK, protocolo: 'ftp_push', porta: 21 })
+    setMostrarSenha(false); setConfirmandoFab(false); setModal('new-ftp')
+  }
   function openEdit(d) {
     setForm({
       ...d,
@@ -137,6 +214,7 @@ export default function Devices() {
       if (resp?.data?.ftp_senha) {
         setCredencialFtp({
           nome: resp.data.nome,
+          fabricante: resp.data.fabricante,
           ftp_user: resp.data.ftp_user,
           ftp_senha: resp.data.ftp_senha,
           ftp_origem_cidr: resp.data.ftp_origem_cidr,
@@ -155,6 +233,7 @@ export default function Devices() {
       const { data } = await api.post(`/devices/${d.id}/ftp-credentials/regenerate`)
       setCredencialFtp({
         nome: d.nome,
+        fabricante: d.fabricante,
         ftp_user: data.ftp_user,
         ftp_senha: data.ftp_senha,
         ftp_origem_cidr: data.ftp_origem_cidr,
@@ -194,10 +273,18 @@ export default function Devices() {
           </p>
         </div>
         {canEdit && (
-          <button onClick={openNew}
-            className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            <Plus size={16} /> Novo Dispositivo
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={openNewFtp}
+              title="Cadastrar dispositivo cujo backup chega via FTP push"
+              className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              <Upload size={16} /> Novo via FTP
+            </button>
+            <button onClick={openNew}
+              title="Cadastrar dispositivo coletado por SSH ou Telnet"
+              className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              <Plus size={16} /> Novo Dispositivo
+            </button>
+          </div>
         )}
       </div>
 
@@ -414,8 +501,8 @@ export default function Devices() {
 
       {credencialFtp && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-2xl border border-violet-500/40 w-full max-w-lg flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+          <div className="bg-slate-800 rounded-2xl border border-violet-500/40 w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 <Key size={20} className="text-violet-300" />
                 <div>
@@ -425,7 +512,7 @@ export default function Devices() {
               </div>
               <button onClick={() => setCredencialFtp(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 flex items-start gap-2">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <span><strong>Anote a senha agora.</strong> Por segurança, ela não será mostrada novamente. Se perder, é só regenerar pelo botão na linha do dispositivo.</span>
@@ -457,8 +544,38 @@ export default function Devices() {
                   </div>
                 </div>
               ))}
+              {credencialFtp.fabricante && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs text-slate-400">
+                      Comando para configurar no equipamento — <span className="capitalize text-violet-300">{FTP_EXAMPLES[credencialFtp.fabricante]?.titulo || credencialFtp.fabricante}</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(montarExemploFtp(
+                        credencialFtp.fabricante,
+                        window.location.hostname,
+                        credencialFtp.ftp_user,
+                        credencialFtp.ftp_senha,
+                      ))}
+                      title="Copiar comando completo"
+                      className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
+                    >
+                      <Copy size={12} /> Copiar
+                    </button>
+                  </div>
+                  <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-56 overflow-auto">
+                    {montarExemploFtp(
+                      credencialFtp.fabricante,
+                      window.location.hostname,
+                      credencialFtp.ftp_user,
+                      credencialFtp.ftp_senha,
+                    )}
+                  </pre>
+                </div>
+              )}
             </div>
-            <div className="p-5 border-t border-slate-700">
+            <div className="p-5 border-t border-slate-700 shrink-0">
               <button onClick={() => setCredencialFtp(null)}
                 className="w-full bg-violet-500 hover:bg-violet-400 text-white py-2 rounded-lg text-sm font-medium transition-colors">
                 Já anotei, fechar
@@ -474,7 +591,9 @@ export default function Devices() {
             <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="font-semibold text-white">
-                  {modal === 'new' ? 'Novo Dispositivo' : 'Editar Dispositivo'}
+                  {modal === 'new' ? 'Novo Dispositivo'
+                    : modal === 'new-ftp' ? 'Novo Dispositivo via FTP'
+                    : 'Editar Dispositivo'}
                 </h2>
                 {modal !== 'new' && typeof modal === 'number' && (
                   <span className="text-xs font-mono text-slate-400 bg-slate-900 border border-slate-600 px-2 py-0.5 rounded">
@@ -524,6 +643,27 @@ export default function Devices() {
                     />
                     <p className="text-xs text-slate-500 mt-1">
                       Apenas conexões originadas deste range serão aceitas. Use /32 para um IP fixo, /24 para uma faixa.
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-sm text-slate-400">
+                        Exemplo de configuração — <span className="capitalize text-violet-300">{FTP_EXAMPLES[form.fabricante]?.titulo || form.fabricante}</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(montarExemploFtp(form.fabricante, window.location.hostname))}
+                        title="Copiar comando"
+                        className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
+                      >
+                        <Copy size={12} /> Copiar
+                      </button>
+                    </div>
+                    <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
+                      {montarExemploFtp(form.fabricante, window.location.hostname)}
+                    </pre>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Após salvar, você verá o mesmo comando já com usuário e senha gerados. Adapte ao firmware específico se necessário.
                     </p>
                   </div>
                 </>
@@ -639,6 +779,7 @@ export default function Devices() {
                   {FABRICANTES.map(f => <option key={f} value={f} className="capitalize">{f}</option>)}
                 </select>
               </div>
+              {modal !== 'new-ftp' && (
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Protocolo de coleta</label>
                 <div className="flex flex-col gap-2">
@@ -646,7 +787,8 @@ export default function Devices() {
                     { p: 'ssh', cls: 'text-sky-400', desc: 'servidor conecta via SSH' },
                     { p: 'telnet', cls: 'text-orange-400', desc: 'servidor conecta via Telnet (legado)' },
                     { p: 'ftp_push', cls: 'text-violet-300', desc: 'equipamento envia o backup pro servidor' },
-                  ].map(({ p, cls, desc }) => (
+                  // ftp_push só aparece em modo edição (já que tem botão dedicado pro novo)
+                  ].filter(({ p }) => modal === 'new' ? p !== 'ftp_push' : true).map(({ p, cls, desc }) => (
                     <label key={p} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="radio"
@@ -670,6 +812,7 @@ export default function Devices() {
                   ))}
                 </div>
               </div>
+              )}
             </div>
             {confirmandoFab ? (
               <div className="p-5 border-t border-slate-700 bg-amber-500/5 shrink-0">
