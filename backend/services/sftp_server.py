@@ -14,10 +14,11 @@ Camadas de defesa idênticas ao FTP:
 
 Diferenças do FTP:
 - Transporte criptografado por SSH (chave de host Ed25519/RSA persistida)
-- Portas externas 22 e 2222 (mapeadas no docker-compose para 2222 do container).
+- Porta externa 22 (mapeada no docker-compose para 2222 do container).
   SSH do host migrou para 2288 em 2026-04-27 para liberar a 22 default —
-  necessário porque OLTs Huawei VRP geralmente não aceitam porta SFTP custom
-  no comando `backup configuration sftp`.
+  necessário porque a maioria dos equipamentos (OLTs Huawei VRP, ZTE,
+  switches em geral) não aceita porta SFTP custom no comando de backup,
+  então padronizamos em 22 pra todos os fabricantes.
 - Cada conexão roda em thread separada
 
 Compatibilidade com equipamento legado:

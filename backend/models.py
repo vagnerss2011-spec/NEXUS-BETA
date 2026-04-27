@@ -30,7 +30,7 @@ class Protocolo(str, enum.Enum):
     telnet = "telnet"
     # Modos de PUSH: equipamento envia o backup pro servidor.
     # ftp_push   = FTP (porta 21, plano, user+senha+IP)
-    # sftp_push  = SFTP via SSH (porta 2222, criptografado, user+senha+IP)
+    # sftp_push  = SFTP via SSH (porta 22, criptografado, user+senha+IP)
     # tftp_push  = TFTP (porta 69/UDP, sem auth, IP /32 obrigatório)
     ftp_push = "ftp_push"
     sftp_push = "sftp_push"

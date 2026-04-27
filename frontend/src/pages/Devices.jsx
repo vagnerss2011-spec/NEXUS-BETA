@@ -35,9 +35,9 @@ const STATUS_FILTROS = [
   { value: 'desconhecido', label: 'Status desconhecido' },
 ]
 // SFTP usa porta 22 (default do protocolo) desde 2026-04-27 — SSH do host migrou
-// pra 2288 pra liberar a 22 ao container, porque OLTs Huawei VRP não aceitam
-// porta SFTP custom no comando 'backup configuration sftp'. Porta 2222 segue
-// mapeada por compat com equipamentos já configurados nela.
+// pra 2288 pra liberar a 22 ao container, porque a maioria dos equipamentos
+// (OLTs Huawei VRP, ZTE, switches genéricos) não aceita porta SFTP custom no
+// comando de backup. Padronizamos em 22 para todos os fabricantes.
 const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_push: 69 }
 const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
 const PUSH_PROTOCOLS = ['sftp_push', 'ftp_push', 'tftp_push']  // ordem do select (SFTP recomendado)
