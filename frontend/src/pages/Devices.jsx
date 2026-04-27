@@ -39,6 +39,13 @@ const STATUS_FILTROS = [
 // (OLTs Huawei VRP, ZTE, switches genéricos) não aceita porta SFTP custom no
 // comando de backup. Padronizamos em 22 para todos os fabricantes.
 const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_push: 69 }
+
+// IPv4 público do servidor de backup. Hardcoded de propósito: muitos equipamentos
+// que fazem push (OLTs, switches) não resolvem nomes — exibir um IP fixo nos
+// exemplos é mais confiável que usar window.location.hostname (que pode ser o
+// domínio backup.bandaa.net.br quando o admin acessa pelo painel).
+// Atualizar AQUI se o servidor migrar de IP/host.
+const IP_SERVIDOR_BACKUP = '45.5.16.28'
 const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
 const PUSH_PROTOCOLS = ['sftp_push', 'ftp_push', 'tftp_push']  // ordem do select (SFTP recomendado)
 const PUSH_PROTO_INFO = {
@@ -718,7 +725,7 @@ export default function Devices() {
                 <span><strong>Anote a senha agora.</strong> Por segurança, ela não será mostrada novamente. Se perder, é só regenerar pelo botão na linha do dispositivo.</span>
               </div>
               {[
-                { label: 'Servidor', value: window.location.hostname, mono: true },
+                { label: 'Servidor', value: IP_SERVIDOR_BACKUP, mono: true },
                 { label: 'Porta', value: '21' },
                 { label: 'Usuário', value: credencialFtp.ftp_user, mono: true },
                 { label: 'Senha', value: credencialFtp.ftp_senha, mono: true },
@@ -754,7 +761,7 @@ export default function Devices() {
                       type="button"
                       onClick={() => navigator.clipboard?.writeText(montarExemploFtp(
                         credencialFtp.fabricante,
-                        window.location.hostname,
+                        IP_SERVIDOR_BACKUP,
                         credencialFtp.ftp_user,
                         credencialFtp.ftp_senha,
                       ))}
@@ -767,7 +774,7 @@ export default function Devices() {
                   <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-56 overflow-auto">
                     {montarExemploFtp(
                       credencialFtp.fabricante,
-                      window.location.hostname,
+                      IP_SERVIDOR_BACKUP,
                       credencialFtp.ftp_user,
                       credencialFtp.ftp_senha,
                     )}
@@ -901,7 +908,7 @@ export default function Devices() {
                       </label>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, window.location.hostname))}
+                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP))}
                         title="Copiar comando"
                         className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
                       >
@@ -909,7 +916,7 @@ export default function Devices() {
                       </button>
                     </div>
                     <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
-                      {montarExemploPush(form.protocolo, form.fabricante, window.location.hostname)}
+                      {montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP)}
                     </pre>
                     <p className="text-xs text-slate-500 mt-1">
                       {form.protocolo === 'tftp_push'
