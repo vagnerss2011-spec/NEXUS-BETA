@@ -18,11 +18,10 @@ Diferenças do FTP:
 - Cada conexão roda em thread separada
 """
 import os
-import io
 import socket
+import stat as stat_mod
 import threading
 import logging
-import tempfile
 import paramiko
 from sqlalchemy import select
 from models import Device, Protocolo
@@ -69,6 +68,13 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
     def get_allowed_auths(self, username):
         return "password"
 
+    def homedir(self) -> str | None:
+        """Diretório real no disco onde o user pode escrever.
+        None se o user não foi autenticado ainda."""
+        if not self.username:
+            return None
+        return os.path.join(SFTP_UPLOAD_DIR, self.username)
+
     def check_auth_password(self, username, password):
         with SyncSessionLocal() as db:
             dev = db.execute(
@@ -98,6 +104,12 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
         self.device_id = dev.id
         self.device_empresa_id = dev.empresa_id
         self.device_nome = dev.nome
+        # Garante que o homedir do user existe no disco — equipamentos como
+        # Huawei OLT verificam o diretório antes de abrir o arquivo pra escrever.
+        try:
+            os.makedirs(self.homedir(), exist_ok=True)
+        except Exception:
+            log.exception("Falha ao criar homedir SFTP para %s", username)
         return paramiko.AUTH_SUCCESSFUL
 
     def check_channel_request(self, kind, chanid):
@@ -107,15 +119,17 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
 
 
 class NexusSFTPHandle(paramiko.SFTPHandle):
-    """Handle de upload — escreve o conteúdo num temp file e dispara o
-    processamento quando o cliente fecha o handle."""
+    """Handle de upload — escreve direto no homedir do user e dispara o
+    processamento quando o cliente fecha o handle. O arquivo é APAGADO
+    após processar (o conteúdo vai pro Backup row no banco)."""
 
-    def __init__(self, server_iface: "NexusSFTPServerInterface", flags: int):
+    def __init__(self, server_iface: "NexusSFTPServerInterface",
+                 real_path: str, flags: int):
         super().__init__(flags)
         self.server_iface = server_iface
-        # Temp file isolado por upload (não interfere com outros)
-        fd, self.tmp_path = tempfile.mkstemp(prefix="sftp-", dir=SFTP_UPLOAD_DIR)
-        self.f = os.fdopen(fd, "wb+")
+        self.real_path = real_path
+        os.makedirs(os.path.dirname(real_path), exist_ok=True)
+        self.f = open(real_path, "wb+")
         self.writefile = self.f
         self.readfile = self.f  # alguns clientes abrem RDWR
         self.fechou = False
@@ -127,44 +141,119 @@ class NexusSFTPHandle(paramiko.SFTPHandle):
         try:
             self.f.flush()
             self.f.close()
-            self.server_iface.processar_upload_local(self.tmp_path)
+            self.server_iface.processar_upload_local(self.real_path)
         except Exception:
-            log.exception("Falha ao processar upload SFTP de %s", self.server_iface.ssh_server.username)
+            log.exception("Falha ao processar upload SFTP de %s",
+                          self.server_iface.ssh_server.username)
         finally:
             try:
-                os.unlink(self.tmp_path)
+                os.unlink(self.real_path)
             except OSError:
                 pass
             super().close()
 
 
 class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
-    """Implementa o SFTP — só permite upload (STOR via open com write flag)."""
+    """SFTP com chroot virtual — todas as operações ficam restritas ao
+    homedir do user (/var/ftp/sftp-uploads/<ftp_user>/). Permitido:
+    open-write, list_folder, stat, lstat, mkdir (transparente).
+    Negado: read, remove, rmdir, rename, symlink, chattr."""
 
     def __init__(self, server, *args, **kwargs):
         super().__init__(server, *args, **kwargs)
         self.ssh_server: NexusSSHServerInterface = server
 
+    def _homedir(self) -> str:
+        d = self.ssh_server.homedir()
+        if not d:
+            raise paramiko.SFTPError(paramiko.SFTP_PERMISSION_DENIED, "no homedir")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _real_path(self, sftp_path: str) -> str | None:
+        """Mapeia path do cliente pra path real no disco, preso ao homedir.
+        Rejeita parent traversal."""
+        try:
+            home = self._homedir()
+        except Exception:
+            return None
+        # path do cliente: '/' = homedir, 'arq.cfg' ou '/arq.cfg' = home/arq.cfg
+        clean = sftp_path.lstrip("/").replace("\\", "/")
+        if clean == "" or clean == ".":
+            return home
+        if ".." in clean.split("/"):
+            return None
+        candidato = os.path.normpath(os.path.join(home, clean))
+        # Garante que o resultado AINDA está dentro do homedir (defesa
+        # contra symlinks ou paths absolutos malformados)
+        if not (candidato == home or candidato.startswith(home + os.sep)):
+            return None
+        return candidato
+
     def open(self, path, flags, attr):
         # Aceita só abertura para escrita. Read-only é negado.
         if not (flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)):
             return paramiko.SFTP_PERMISSION_DENIED
+        real = self._real_path(path)
+        if real is None:
+            return paramiko.SFTP_PERMISSION_DENIED
         try:
-            return NexusSFTPHandle(self, flags)
+            return NexusSFTPHandle(self, real, flags)
         except Exception:
             log.exception("Falha ao abrir handle de upload")
             return paramiko.SFTP_FAILURE
 
-    def processar_upload_local(self, tmp_path: str):
+    def list_folder(self, path):
+        real = self._real_path(path)
+        if real is None or not os.path.isdir(real):
+            return paramiko.SFTP_NO_SUCH_FILE
         try:
-            tamanho = os.path.getsize(tmp_path)
+            entries = []
+            for nome in os.listdir(real):
+                full = os.path.join(real, nome)
+                attr = paramiko.SFTPAttributes.from_stat(os.stat(full))
+                attr.filename = nome
+                entries.append(attr)
+            return entries
+        except Exception:
+            return paramiko.SFTP_FAILURE
+
+    def stat(self, path):
+        real = self._real_path(path)
+        if real is None:
+            return paramiko.SFTP_NO_SUCH_FILE
+        try:
+            return paramiko.SFTPAttributes.from_stat(os.stat(real))
+        except FileNotFoundError:
+            return paramiko.SFTP_NO_SUCH_FILE
+        except Exception:
+            return paramiko.SFTP_FAILURE
+
+    def lstat(self, path):
+        return self.stat(path)
+
+    def mkdir(self, path, attr):
+        # Aceita transparente — alguns clientes criam dir antes de subir.
+        # Como o homedir já existe, é no-op em 99% dos casos.
+        real = self._real_path(path)
+        if real is None:
+            return paramiko.SFTP_PERMISSION_DENIED
+        try:
+            os.makedirs(real, exist_ok=True)
+            return paramiko.SFTP_OK
+        except Exception:
+            return paramiko.SFTP_FAILURE
+
+    def processar_upload_local(self, real_path: str):
+        try:
+            tamanho = os.path.getsize(real_path)
         except OSError:
             return
         if tamanho == 0 or tamanho > MAX_FILE_SIZE:
             log.warning("SFTP upload de %s rejeitado: tamanho=%s",
                         self.ssh_server.username, tamanho)
             return
-        with open(tmp_path, "r", errors="replace") as f:
+        with open(real_path, "r", errors="replace") as f:
             conteudo = f.read()
         with SyncSessionLocal() as db:
             dev = db.execute(
@@ -175,12 +264,8 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
             processar_upload(dev, conteudo, self.ssh_server.client_ip, tamanho, db)
             db.commit()
 
-    # Operações negadas — SFTP é write-only do lado do cliente.
-    def list_folder(self, path): return paramiko.SFTP_PERMISSION_DENIED
-    def stat(self, path): return paramiko.SFTP_PERMISSION_DENIED
-    def lstat(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    # Operações ainda negadas — SFTP é write-only do ponto de vista do cliente.
     def remove(self, path): return paramiko.SFTP_PERMISSION_DENIED
-    def mkdir(self, path, attr): return paramiko.SFTP_PERMISSION_DENIED
     def rmdir(self, path): return paramiko.SFTP_PERMISSION_DENIED
     def chattr(self, path, attr): return paramiko.SFTP_PERMISSION_DENIED
     def rename(self, oldpath, newpath): return paramiko.SFTP_PERMISSION_DENIED

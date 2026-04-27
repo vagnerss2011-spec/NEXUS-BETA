@@ -105,11 +105,15 @@ class DBAuthorizer(DummyAuthorizer):
         return True
 
     def has_perm(self, username, perm, path=None):
-        # 'w' = STOR / STOU / APPE — único permitido
-        return perm == "w"
+        # Permissões: 'e' (changedir), 'l' (list), 'w' (STOR/STOU/APPE).
+        # Equipamentos legados (Huawei, Fiberhome) fazem CWD/LIST antes de
+        # abrir o arquivo. Sem 'e' e 'l' o upload aborta.
+        # NÃO inclui 'r' (RETR) — atacante com credencial não baixa nada.
+        # NÃO inclui 'd' (DELE), 'm' (MKD), 'f' (RNFR/RNTO) — write-only.
+        return perm in ("e", "l", "w")
 
     def get_perms(self, username):
-        return "w"
+        return "elw"
 
     def get_msg_login(self, username):
         return "Login OK. Envie o arquivo de configuração."
