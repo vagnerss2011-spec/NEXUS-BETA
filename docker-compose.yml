@@ -6,6 +6,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-America/Sao_Paulo}
+      PGTZ: ${TZ:-America/Sao_Paulo}
     expose:
       - "5432"
     volumes:
@@ -28,6 +30,7 @@ services:
       ALGORITHM: ${ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      TZ: ${TZ:-America/Sao_Paulo}
     depends_on:
       db:
         condition: service_healthy
@@ -41,6 +44,7 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
       NGINX_ENVSUBST_VARS: "DOMAIN"
+      TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - ./infra/certbot/conf:/etc/letsencrypt
       - ./infra/certbot/www:/var/www/certbot

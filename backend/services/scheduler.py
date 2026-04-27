@@ -118,6 +118,6 @@ def atualizar_scheduler(hour: int, minute: int):
 async def iniciar_scheduler():
     hour, minute = await _carregar_horario()
     scheduler.add_job(executar_backups, "cron", hour=hour, minute=minute, id="backup_diario")
-    # Purga de logs: todo dia às 03:00 UTC
+    # Purga de logs: todo dia às 03:00 (TZ do container — definido em docker-compose)
     scheduler.add_job(purgar_logs_antigos, "cron", hour=3, minute=0, id=PURGA_LOGS_JOB_ID)
     scheduler.start()
