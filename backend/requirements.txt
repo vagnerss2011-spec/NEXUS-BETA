@@ -14,3 +14,4 @@ netmiko==4.4.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 cryptography==42.0.7
+pyftpdlib==1.5.10

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle, Key, KeyRound } from 'lucide-react'
+import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle, Key, KeyRound, Upload, Copy, RefreshCw } from 'lucide-react'
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -11,14 +11,15 @@ const TIPOS = [
   { value: 'wireless', label: 'Wireless' },
 ]
 const TIPO_LABEL = Object.fromEntries(TIPOS.map(t => [t.value, t.label]))
-const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '' }
+const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '', ftp_origem_cidr: '' }
 const STATUS_FILTROS = [
   { value: 'todos', label: 'Todos os status' },
   { value: 'sucesso', label: 'Backup com sucesso' },
   { value: 'falha', label: 'Backup com falha' },
   { value: 'desconhecido', label: 'Status desconhecido' },
 ]
-const DEFAULT_PORTS = { ssh: 22, telnet: 23 }
+const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21 }
+const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push' }
 const formatHostPort = (ip, porta) => {
   if (!ip) return ''
   return ip.includes(':') ? `[${ip}]:${porta}` : `${ip}:${porta}`
@@ -34,6 +35,7 @@ export default function Devices() {
   const [backupResult, setBackupResult] = useState(null)
   const [mostrarSenha, setMostrarSenha] = useState(false)
   const [confirmandoFab, setConfirmandoFab] = useState(false)
+  const [credencialFtp, setCredencialFtp] = useState(null)
   const [busca, setBusca] = useState('')
   const [filtroFabricante, setFiltroFabricante] = useState('todos')
   const [filtroTipo, setFiltroTipo] = useState('todos')
@@ -105,9 +107,9 @@ export default function Devices() {
     }
     setLoading(true)
     try {
-      // Monta payload limpo: telnet sempre força senha; ssh respeita auth_method
       const isTelnet = form.protocolo === 'telnet'
-      const authMethod = isTelnet ? 'password' : (form.auth_method || 'password')
+      const isFtp = form.protocolo === 'ftp_push'
+      const authMethod = (isTelnet || isFtp) ? 'password' : (form.auth_method || 'password')
       const payload = {
         nome: form.nome,
         ip: form.ip,
@@ -115,24 +117,51 @@ export default function Devices() {
         fabricante: form.fabricante,
         tipo: form.tipo,
         protocolo: form.protocolo,
-        usuario_ssh: form.usuario_ssh,
+        usuario_ssh: form.usuario_ssh || null,
         auth_method: authMethod,
         empresa_id: empresa?.id,
       }
-      if (authMethod === 'ssh_key') {
+      if (isFtp) {
+        payload.ftp_origem_cidr = form.ftp_origem_cidr
+      } else if (authMethod === 'ssh_key') {
         if (form.chave_privada && form.chave_privada.trim()) payload.chave_privada = form.chave_privada
         if (form.chave_passphrase) payload.chave_passphrase = form.chave_passphrase
       } else {
         if (form.senha_ssh) payload.senha_ssh = form.senha_ssh
       }
-      if (modal === 'new') await api.post('/devices/', payload)
-      else await api.put(`/devices/${modal}`, payload)
+      let resp
+      if (modal === 'new') resp = await api.post('/devices/', payload)
+      else resp = await api.put(`/devices/${modal}`, payload)
       fecharModal()
+      // Criação de FTP push retorna ftp_senha em texto puro UMA vez
+      if (resp?.data?.ftp_senha) {
+        setCredencialFtp({
+          nome: resp.data.nome,
+          ftp_user: resp.data.ftp_user,
+          ftp_senha: resp.data.ftp_senha,
+          ftp_origem_cidr: resp.data.ftp_origem_cidr,
+        })
+      }
       load()
     } catch (err) {
       const detail = err?.response?.data?.detail || 'Erro ao salvar dispositivo'
       alert(detail)
     } finally { setLoading(false) }
+  }
+
+  async function regenerarCredencialFtp(d) {
+    if (!confirm(`Regenerar a senha FTP de "${d.nome}"?\n\nA senha atual será invalidada e você precisará atualizar a configuração no equipamento.`)) return
+    try {
+      const { data } = await api.post(`/devices/${d.id}/ftp-credentials/regenerate`)
+      setCredencialFtp({
+        nome: d.nome,
+        ftp_user: data.ftp_user,
+        ftp_senha: data.ftp_senha,
+        ftp_origem_cidr: data.ftp_origem_cidr,
+      })
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Falha ao regenerar credencial')
+    }
   }
 
   async function del(id) {
@@ -265,9 +294,12 @@ export default function Devices() {
                   <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium ${
                     d.protocolo === 'telnet'
                       ? 'bg-orange-500/20 text-orange-400'
-                      : 'bg-sky-500/20 text-sky-400'
+                      : d.protocolo === 'ftp_push'
+                        ? 'bg-violet-500/20 text-violet-300'
+                        : 'bg-sky-500/20 text-sky-400'
                   }`}>
-                    {d.protocolo?.toUpperCase() || 'SSH'}
+                    {d.protocolo === 'ftp_push' && <Upload size={11} />}
+                    {PROTOCOL_LABEL[d.protocolo] || 'SSH'}
                   </span>
                 </td>
                 <td className="px-5 py-3.5">
@@ -292,11 +324,20 @@ export default function Devices() {
                 {canEdit && (
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2 justify-end">
-                      <button onClick={() => runBackup(d.id)} disabled={runningId === d.id}
-                        title="Executar backup agora"
-                        className="p-1.5 text-emerald-400 hover:bg-emerald-500/20 rounded transition-colors">
-                        {runningId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
-                      </button>
+                      {d.protocolo !== 'ftp_push' && (
+                        <button onClick={() => runBackup(d.id)} disabled={runningId === d.id}
+                          title="Executar backup agora"
+                          className="p-1.5 text-emerald-400 hover:bg-emerald-500/20 rounded transition-colors">
+                          {runningId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+                        </button>
+                      )}
+                      {d.protocolo === 'ftp_push' && (
+                        <button onClick={() => regenerarCredencialFtp(d)}
+                          title="Regenerar credencial FTP"
+                          className="p-1.5 text-violet-300 hover:bg-violet-500/20 rounded transition-colors">
+                          <RefreshCw size={15} />
+                        </button>
+                      )}
                       <button onClick={() => openEdit(d)} title="Editar"
                         className="p-1.5 text-sky-400 hover:bg-sky-500/20 rounded transition-colors">
                         <Pencil size={15} />
@@ -371,6 +412,62 @@ export default function Devices() {
         </div>
       )}
 
+      {credencialFtp && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-2xl border border-violet-500/40 w-full max-w-lg flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <Key size={20} className="text-violet-300" />
+                <div>
+                  <h2 className="font-semibold text-white">Credencial FTP gerada</h2>
+                  <p className="text-xs text-slate-400">{credencialFtp.nome}</p>
+                </div>
+              </div>
+              <button onClick={() => setCredencialFtp(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 flex items-start gap-2">
+                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                <span><strong>Anote a senha agora.</strong> Por segurança, ela não será mostrada novamente. Se perder, é só regenerar pelo botão na linha do dispositivo.</span>
+              </div>
+              {[
+                { label: 'Servidor', value: window.location.hostname, mono: true },
+                { label: 'Porta', value: '21' },
+                { label: 'Usuário', value: credencialFtp.ftp_user, mono: true },
+                { label: 'Senha', value: credencialFtp.ftp_senha, mono: true },
+                { label: 'IP de origem permitido', value: credencialFtp.ftp_origem_cidr, mono: true },
+              ].map(({ label, value, mono }) => (
+                <div key={label}>
+                  <label className="block text-xs text-slate-400 mb-1">{label}</label>
+                  <div className="flex gap-2">
+                    <input
+                      readOnly
+                      value={value || ''}
+                      className={`flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm ${mono ? 'font-mono' : ''}`}
+                    />
+                    {value && (
+                      <button
+                        onClick={() => navigator.clipboard?.writeText(value)}
+                        title="Copiar"
+                        className="p-2 text-slate-400 hover:text-white border border-slate-600 rounded-lg transition-colors"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-5 border-t border-slate-700">
+              <button onClick={() => setCredencialFtp(null)}
+                className="w-full bg-violet-500 hover:bg-violet-400 text-white py-2 rounded-lg text-sm font-medium transition-colors">
+                Já anotei, fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-md max-h-[90vh] flex flex-col">
@@ -391,17 +488,48 @@ export default function Devices() {
               {[
                 { label: 'Nome', key: 'nome', placeholder: 'Router-Core-SP' },
                 { label: 'IP (IPv4 ou IPv6)', key: 'ip', placeholder: '192.168.1.1 ou 2001:db8::1' },
-                { label: 'Porta SSH', key: 'porta', placeholder: '22', type: 'number' },
-                { label: 'Usuário SSH', key: 'usuario_ssh', placeholder: 'admin' },
+                { label: form.protocolo === 'ftp_push' ? 'Porta FTP' : 'Porta SSH', key: 'porta', placeholder: form.protocolo === 'ftp_push' ? '21' : '22', type: 'number' },
+                ...(form.protocolo === 'ftp_push' ? [] : [
+                  { label: 'Usuário SSH', key: 'usuario_ssh', placeholder: 'admin' },
+                ]),
               ].map(({ label, key, placeholder, type = 'text' }) => (
                 <div key={key}>
                   <label className="block text-sm text-slate-400 mb-1.5">{label}</label>
-                  <input type={type} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                  <input type={type} value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                     placeholder={placeholder}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors" />
                 </div>
               ))}
-              {form.protocolo !== 'telnet' && (
+              {form.protocolo === 'ftp_push' && (
+                <>
+                  <div className="bg-violet-500/5 border border-violet-500/30 rounded-lg p-3 text-xs text-slate-300">
+                    <div className="flex items-start gap-2">
+                      <Upload size={14} className="text-violet-300 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-medium text-white">Modo recebimento</p>
+                        <p className="mt-1">O servidor não conecta no equipamento — o equipamento envia o backup pra cá via FTP. Após salvar, você verá user e senha gerados pra configurar no equipamento.</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">
+                      IP de origem permitido (CIDR IPv4)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.ftp_origem_cidr || ''}
+                      onChange={e => setForm(f => ({ ...f, ftp_origem_cidr: e.target.value }))}
+                      placeholder="187.123.45.10/32 ou 187.123.45.0/24"
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-violet-500 transition-colors"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Apenas conexões originadas deste range serão aceitas. Use /32 para um IP fixo, /24 para uma faixa.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {form.protocolo !== 'telnet' && form.protocolo !== 'ftp_push' && (
                 <div>
                   <label className="block text-sm text-slate-400 mb-1.5">Método de autenticação</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -426,7 +554,7 @@ export default function Devices() {
                 </div>
               )}
 
-              {(form.protocolo === 'telnet' || form.auth_method !== 'ssh_key') && (
+              {form.protocolo !== 'ftp_push' && (form.protocolo === 'telnet' || form.auth_method !== 'ssh_key') && (
                 <div>
                   <label className="block text-sm text-slate-400 mb-1.5">
                     Senha {form.protocolo !== 'telnet' && form.auth_method === 'password' ? 'SSH' : ''}
@@ -512,9 +640,13 @@ export default function Devices() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-slate-400 mb-1.5">Protocolo de acesso</label>
-                <div className="flex gap-3">
-                  {['ssh', 'telnet'].map(p => (
+                <label className="block text-sm text-slate-400 mb-1.5">Protocolo de coleta</label>
+                <div className="flex flex-col gap-2">
+                  {[
+                    { p: 'ssh', cls: 'text-sky-400', desc: 'servidor conecta via SSH' },
+                    { p: 'telnet', cls: 'text-orange-400', desc: 'servidor conecta via Telnet (legado)' },
+                    { p: 'ftp_push', cls: 'text-violet-300', desc: 'equipamento envia o backup pro servidor' },
+                  ].map(({ p, cls, desc }) => (
                     <label key={p} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="radio"
@@ -525,15 +657,15 @@ export default function Devices() {
                           ...f,
                           protocolo: p,
                           porta: f.porta === DEFAULT_PORTS[f.protocolo] ? DEFAULT_PORTS[p] : f.porta,
-                          // Telnet não suporta chave SSH — força senha
-                          auth_method: p === 'telnet' ? 'password' : f.auth_method,
+                          // Telnet/FTP não suportam chave SSH — força senha
+                          auth_method: (p === 'telnet' || p === 'ftp_push') ? 'password' : f.auth_method,
                         }))}
                         className="accent-sky-500"
                       />
-                      <span className={`text-sm font-medium ${p === 'telnet' ? 'text-orange-400' : 'text-sky-400'}`}>
-                        {p.toUpperCase()}
+                      <span className={`text-sm font-medium ${cls}`}>
+                        {PROTOCOL_LABEL[p]}
                       </span>
-                      <span className="text-xs text-slate-500">(padrão {DEFAULT_PORTS[p]})</span>
+                      <span className="text-xs text-slate-500">{desc} (porta {DEFAULT_PORTS[p]})</span>
                     </label>
                   ))}
                 </div>

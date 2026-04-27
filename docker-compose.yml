@@ -23,6 +23,12 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    # FTP push: porta de controle (21) + faixa passiva (30000-30099). Equipamentos
+    # da empresa enviam o backup direto para essas portas; o backend valida user,
+    # senha e IP de origem antes de aceitar o arquivo.
+    ports:
+      - "21:21"
+      - "30000-30099:30000-30099"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}

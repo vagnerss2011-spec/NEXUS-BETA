@@ -23,6 +23,9 @@ class DeviceVendor(str, enum.Enum):
 class Protocolo(str, enum.Enum):
     ssh = "ssh"
     telnet = "telnet"
+    # ftp_push = backend NÃO conecta no equipamento; o equipamento envia o
+    # backup pra cá via FTP. Autenticação por user/senha gerados + IP whitelist.
+    ftp_push = "ftp_push"
 
 class AuthMethod(str, enum.Enum):
     password = "password"
@@ -43,6 +46,10 @@ class TipoAtividade(str, enum.Enum):
     device_teste_falha = "device_teste_falha"
     usuario_criado = "usuario_criado"
     backup_removido = "backup_removido"
+    # FTP push
+    ftp_backup_recebido = "ftp_backup_recebido"
+    ftp_volume_alto = "ftp_volume_alto"
+    ftp_acesso_negado = "ftp_acesso_negado"
 
 class Empresa(Base):
     __tablename__ = "empresas"
@@ -84,6 +91,11 @@ class Device(Base):
     auth_method = Column(Enum(AuthMethod), default=AuthMethod.password, nullable=False)
     chave_privada_enc = Column(Text, nullable=True)      # PEM/OpenSSH cifrado com Fernet
     chave_passphrase_enc = Column(Text, nullable=True)   # opcional, p/ chaves protegidas
+    # FTP push (quando protocolo=ftp_push). Credenciais geradas pelo backend,
+    # senha mostrada uma única vez ao admin. IP de origem é o filtro principal.
+    ftp_user = Column(String(64), nullable=True, unique=True)
+    ftp_senha_enc = Column(Text, nullable=True)
+    ftp_origem_cidr = Column(String(64), nullable=True)  # ex.: 187.123.45.10/32 ou 187.123.45.0/24
     ativo = Column(Boolean, default=True)
     empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

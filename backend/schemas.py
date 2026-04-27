@@ -89,11 +89,13 @@ class DeviceCreate(BaseModel):
     fabricante: DeviceVendor = DeviceVendor.outro
     tipo: DeviceTipo = DeviceTipo.roteador
     protocolo: Protocolo = Protocolo.ssh
-    usuario_ssh: str
+    usuario_ssh: Optional[str] = None  # opcional para protocolo=ftp_push
     auth_method: AuthMethod = AuthMethod.password
     senha_ssh: Optional[str] = None
     chave_privada: Optional[str] = None      # PEM/OpenSSH em texto puro; o router cifra antes de salvar
     chave_passphrase: Optional[str] = None
+    # FTP push (apenas quando protocolo=ftp_push)
+    ftp_origem_cidr: Optional[str] = None
     empresa_id: Optional[int] = None  # exigido p/ admin master; ignorado p/ demais (usa a do token)
 
     @field_validator("ip")
@@ -113,6 +115,7 @@ class DeviceUpdate(BaseModel):
     senha_ssh: Optional[str] = None
     chave_privada: Optional[str] = None
     chave_passphrase: Optional[str] = None
+    ftp_origem_cidr: Optional[str] = None
     ativo: Optional[bool] = None
     empresa_id: Optional[int] = None  # só admin master pode mover entre empresas
 
@@ -129,15 +132,29 @@ class DeviceOut(BaseModel):
     fabricante: DeviceVendor
     tipo: DeviceTipo
     protocolo: Protocolo
-    usuario_ssh: str
+    usuario_ssh: Optional[str] = None
     auth_method: AuthMethod = AuthMethod.password
     ativo: bool
     empresa_id: int
     criado_em: datetime
+    # FTP push: ftp_senha só aparece UMA VEZ no retorno da criação/regeneração
+    # (populada manualmente pelo router; em listagens fica None pois o model
+    # SQLAlchemy não tem esse atributo).
+    ftp_user: Optional[str] = None
+    ftp_origem_cidr: Optional[str] = None
+    ftp_senha: Optional[str] = None
     ultimo_backup_status: Optional[str] = None  # 'sucesso' | 'falha' | None (nunca rodou)
     ultimo_backup_em: Optional[datetime] = None
     class Config:
         from_attributes = True
+
+
+# Retornado SOMENTE no momento de gerar/regenerar credencial FTP — senha em texto puro,
+# nunca persistida em logs nem retornada por listagens. UX: mostrar e copiar.
+class FTPCredentialOut(BaseModel):
+    ftp_user: str
+    ftp_senha: str
+    ftp_origem_cidr: Optional[str] = None
 
 # Backup
 class BackupOut(BaseModel):
