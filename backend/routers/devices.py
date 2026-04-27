@@ -69,11 +69,19 @@ def _validar_chave_ou_400(pem: str, passphrase: Optional[str]) -> None:
         raise HTTPException(status_code=400, detail=f"Chave SSH inválida: {e}")
 
 
-def _validar_cidr_ou_400(cidr: str) -> None:
+def _validar_cidr_ou_400(cidr: str, exigir_host: bool = False) -> None:
+    """Valida que o CIDR é IPv4 válido. Se exigir_host=True, força /32
+    (necessário pra TFTP, que sem auth identifica device pelo IP origem
+    — /24 daria ambiguidade entre vários devices)."""
     try:
         net = ip_network(cidr.strip(), strict=False)
         if net.version != 4:
             raise HTTPException(status_code=400, detail="ftp_origem_cidr precisa ser IPv4")
+        if exigir_host and net.prefixlen != 32:
+            raise HTTPException(
+                status_code=400,
+                detail="Para TFTP o CIDR precisa ser /32 (1 IP exato). TFTP não tem autenticação — o IP é a única identificação do device.",
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"ftp_origem_cidr inválido: {e}")
 
@@ -104,12 +112,16 @@ async def criar_device(
     chave_enc = None
     passphrase_enc = None
     ftp_origem_cidr = None
-    is_ftp = data.protocolo == Protocolo.ftp_push
+    PUSH_PROTOCOLS = (Protocolo.ftp_push, Protocolo.sftp_push, Protocolo.tftp_push)
+    is_push = data.protocolo in PUSH_PROTOCOLS
+    # FTP/SFTP geram credencial (user+senha); TFTP não tem auth.
+    gera_credencial = data.protocolo in (Protocolo.ftp_push, Protocolo.sftp_push)
+    is_tftp = data.protocolo == Protocolo.tftp_push
 
-    if is_ftp:
+    if is_push:
         if not data.ftp_origem_cidr:
-            raise HTTPException(status_code=400, detail="ftp_origem_cidr é obrigatório quando o protocolo é 'ftp_push'")
-        _validar_cidr_ou_400(data.ftp_origem_cidr)
+            raise HTTPException(status_code=400, detail="ftp_origem_cidr é obrigatório para push (FTP/SFTP/TFTP)")
+        _validar_cidr_ou_400(data.ftp_origem_cidr, exigir_host=is_tftp)
         ftp_origem_cidr = data.ftp_origem_cidr.strip()
     else:
         # SSH/Telnet: valida combinação de método de autenticação x credenciais
@@ -147,12 +159,11 @@ async def criar_device(
         raise HTTPException(status_code=400, detail=f"Conflito ao salvar dispositivo: {e.orig}")
     await db.refresh(device)
 
-    # Para FTP push, geramos credencial após ter o ID. A senha em texto puro
-    # é incluída no DeviceOut da resposta apenas DESTA criação (atributo dinâmico
-    # capturado pelo wrapper no return — vide bloco final). Em listagens
-    # subsequentes, ftp_senha não aparece.
+    # FTP/SFTP: geram credencial após ter o ID. Senha em texto puro vai no
+    # DeviceOut da resposta APENAS desta criação. TFTP não gera credencial
+    # (protocolo é anonymous — id do device é o IP de origem).
     ftp_senha_plain: Optional[str] = None
-    if is_ftp:
+    if gera_credencial:
         device.ftp_user = _gerar_ftp_user(device.id)
         ftp_senha_plain = _gerar_ftp_senha()
         device.ftp_senha_enc = encrypt(ftp_senha_plain)
@@ -216,9 +227,13 @@ async def atualizar_device(
         if device.auth_method != AuthMethod.password and not device.senha_ssh_enc:
             raise HTTPException(status_code=400, detail="Para mudar para senha, envie a senha")
 
-    # FTP push: valida CIDR se foi enviado
+    # Push (FTP/SFTP/TFTP): valida CIDR se foi enviado
     if "ftp_origem_cidr" in update and update.get("ftp_origem_cidr"):
-        _validar_cidr_ou_400(update["ftp_origem_cidr"])
+        protocolo_efetivo = update.get("protocolo") or device.protocolo
+        _validar_cidr_ou_400(
+            update["ftp_origem_cidr"],
+            exigir_host=protocolo_efetivo == Protocolo.tftp_push,
+        )
 
     # Os campos sensíveis já foram processados acima; remove pra não atribuir via setattr.
     for k in ("senha_ssh", "chave_privada", "chave_passphrase"):
@@ -244,8 +259,8 @@ async def regenerar_credencial_ftp(
     if not device:
         raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
     ensure_empresa_access(user, device.empresa_id)
-    if device.protocolo != Protocolo.ftp_push:
-        raise HTTPException(status_code=400, detail="Esse dispositivo não usa FTP push")
+    if device.protocolo not in (Protocolo.ftp_push, Protocolo.sftp_push):
+        raise HTTPException(status_code=400, detail="Esse dispositivo não usa FTP/SFTP push (TFTP não tem credencial)")
 
     if not device.ftp_user:
         device.ftp_user = _gerar_ftp_user(device.id)

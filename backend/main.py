@@ -6,6 +6,8 @@ from database import engine, Base
 from routers import auth, users, devices, backups, settings, logs, empresas, atividades
 from services.scheduler import iniciar_scheduler, scheduler
 from services.ftp_server import iniciar_ftp_server, parar_ftp_server
+from services.sftp_server import iniciar_sftp_server, parar_sftp_server
+from services.tftp_server import iniciar_tftp_server, parar_tftp_server
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,11 +26,12 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS 'backup_removido'"))
         except Exception:
             pass
-        # FTP push: novo valor no enum protocolo + atividades relacionadas
-        try:
-            await conn.execute(text("ALTER TYPE protocolo ADD VALUE IF NOT EXISTS 'ftp_push'"))
-        except Exception:
-            pass
+        # FTP/SFTP/TFTP push: novos valores no enum protocolo + atividades relacionadas
+        for proto in ("ftp_push", "sftp_push", "tftp_push"):
+            try:
+                await conn.execute(text(f"ALTER TYPE protocolo ADD VALUE IF NOT EXISTS '{proto}'"))
+            except Exception:
+                pass
         for ev in ("ftp_backup_recebido", "ftp_volume_alto", "ftp_acesso_negado"):
             try:
                 await conn.execute(text(f"ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS '{ev}'"))
@@ -222,9 +225,13 @@ async def lifespan(app: FastAPI):
 
     await iniciar_scheduler()
     iniciar_ftp_server()
+    iniciar_sftp_server()
+    iniciar_tftp_server()
     yield
     scheduler.shutdown()
     parar_ftp_server()
+    parar_sftp_server()
+    parar_tftp_server()
 
 app = FastAPI(title="NEXUS BETA - Backup Manager", version="1.0.0", lifespan=lifespan)
 

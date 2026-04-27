@@ -34,13 +34,18 @@ const STATUS_FILTROS = [
   { value: 'falha', label: 'Backup com falha' },
   { value: 'desconhecido', label: 'Status desconhecido' },
 ]
-const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21 }
-const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push' }
+const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 2222, tftp_push: 69 }
+const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
+const PUSH_PROTOCOLS = ['sftp_push', 'ftp_push', 'tftp_push']  // ordem do select (SFTP recomendado)
+const PUSH_PROTO_INFO = {
+  sftp_push: { label: 'SFTP', desc: 'criptografado (recomendado)', porta: 2222, cor: 'text-emerald-300' },
+  ftp_push:  { label: 'FTP',  desc: 'plano, com user e senha',     porta: 21,   cor: 'text-violet-300' },
+  tftp_push: { label: 'TFTP', desc: 'sem auth, identifica por IP', porta: 69,   cor: 'text-orange-300' },
+}
 
-// Exemplos de configuração para o equipamento enviar backup via FTP.
-// Placeholders <SERVIDOR>, <USUARIO>, <SENHA> são substituídos no modal pós-save.
-// Templates são iniciais — admin deve adaptar nome de arquivo, intervalo e
-// nuances do firmware específico.
+// Snippets antigos só de FTP (mantidos pra compatibilidade — agora também
+// referenciados pelo PUSH_EXAMPLES.ftp). Placeholders <SERVIDOR>, <USUARIO>,
+// <SENHA> são substituídos no modal pós-save.
 const FTP_EXAMPLES = {
   mikrotik: {
     titulo: 'Mikrotik RouterOS v6',
@@ -157,12 +162,99 @@ write`,
   },
 }
 
-function montarExemploFtp(fabricante, servidor, usuario, senha) {
-  const tpl = FTP_EXAMPLES[fabricante] || FTP_EXAMPLES.outro
-  return tpl.cmd
+// Exemplos por protocolo. SFTP/TFTP variam bastante por equipamento;
+// um ❌ no início da string sinaliza que o equipamento não suporta nativamente
+// e o admin deve usar outro protocolo.
+const SFTP_EXAMPLES = {
+  mikrotik:   '# Mikrotik não tem SFTP nativo no /tool fetch. Use FTP ou TFTP.',
+  mikrotik_v7:'# Mikrotik não tem SFTP nativo no /tool fetch. Use FTP ou TFTP.',
+  huawei:    `# Huawei VRP suporta SFTP nativamente.
+save
+backup configuration to sftp <SERVIDOR>:2222 <USUARIO> <SENHA> backup-huawei.cfg`,
+  cisco:     `# Cisco IOS-XE suporta SCP/SFTP. Use porta 2222.
+configure terminal
+ ip ssh client algorithm encryption aes128-ctr aes192-ctr aes256-ctr
+end
+copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-cisco.cfg`,
+  juniper:   `set system archival configuration archive-sites \\
+    "scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222" transfer-on-commit
+commit`,
+  datacom:   `# Datacom DmOS — SFTP em firmwares recentes:
+copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-datacom.cfg`,
+  intelbras: `# Cisco-like: copy via scp:// na maioria das builds.
+copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-intelbras.cfg`,
+  zte:       `# ZTE ZXR10 (firmware recente):
+copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-zte.cfg`,
+  nokia:     `admin save sftp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-nokia.cfg`,
+  ubiquiti:  `# Ubiquiti EdgeOS:
+configure
+set system config-management commit-archive location \\
+    "scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/"
+commit ; save ; exit`,
+  fiberhome: '# Fiberhome OLT (AN5516/AN6000) raramente suporta SFTP. Use FTP ou TFTP.',
+  vsolutions:'# V-SOL OLT raramente suporta SFTP. Use FTP ou TFTP.',
+  outro:     '# Comando genérico — adapte ao manual:\nsftp:// <USUARIO>:<SENHA>@<SERVIDOR>:2222/<arquivo>.cfg',
+}
+
+const TFTP_EXAMPLES = {
+  mikrotik:   `# RouterOS v6 — TFTP é simples (sem auth):
+/system scheduler add name=backup-nexus interval=1d \\
+  on-event="/export file=cfg-backup; \\
+            /tool fetch upload=yes mode=tftp \\
+              address=<SERVIDOR> port=69 \\
+              src-path=cfg-backup.rsc \\
+              dst-path=backup-mikrotik.rsc"`,
+  mikrotik_v7:`# RouterOS v7 — adicione show-sensitive pra incluir senhas:
+/system scheduler add name=backup-nexus interval=1d \\
+  on-event="/export show-sensitive file=cfg-backup; \\
+            /tool fetch upload=yes mode=tftp \\
+              address=<SERVIDOR> port=69 \\
+              src-path=cfg-backup.rsc \\
+              dst-path=backup-mikrotik.rsc"`,
+  huawei:    `save
+backup configuration to tftp <SERVIDOR> backup-huawei.cfg`,
+  cisco:     `copy running-config tftp:
+# (responde: Address? <SERVIDOR>  Filename? backup-cisco.cfg)`,
+  intelbras: `copy running-config tftp://<SERVIDOR>/backup-intelbras.cfg`,
+  datacom:   `copy running-config tftp://<SERVIDOR>/backup-datacom.cfg`,
+  juniper:   `# Juniper não tem upload TFTP nativo do JunOS — use FTP ou SFTP.`,
+  zte:       `# ZTE ZXR10:
+copy running-config tftp://<SERVIDOR>/backup-zte.cfg
+
+# ZTE ZXA10 OLT:
+write
+upload running-configuration tftp <SERVIDOR> backup-zte.cfg`,
+  nokia:     `# Nokia ISAM/7360:
+file upload running-config tftp://<SERVIDOR>/backup-nokia.cfg`,
+  fiberhome: `# Fiberhome AN5516:
+upload startupcfg tftp <SERVIDOR> backup-fiberhome.cfg`,
+  vsolutions:`enable
+upload running-config tftp <SERVIDOR> backup-vsolutions.cfg`,
+  ubiquiti:  `# EdgeOS — exporta config + manual scp/tftp depois.`,
+  outro:     `# Comando genérico — adapte ao manual:
+# upload running-config tftp <SERVIDOR> <nome-do-arquivo>.cfg`,
+}
+
+const PUSH_EXAMPLES = {
+  ftp:  Object.fromEntries(Object.entries(FTP_EXAMPLES).map(([k, v]) => [k, v.cmd])),
+  sftp: SFTP_EXAMPLES,
+  tftp: TFTP_EXAMPLES,
+}
+
+function montarExemploPush(protocolo, fabricante, servidor, usuario, senha) {
+  // protocolo: 'ftp_push' | 'sftp_push' | 'tftp_push'
+  const proto = protocolo === 'sftp_push' ? 'sftp' : protocolo === 'tftp_push' ? 'tftp' : 'ftp'
+  const examples = PUSH_EXAMPLES[proto] || PUSH_EXAMPLES.ftp
+  const tpl = examples[fabricante] || examples.outro
+  return tpl
     .replaceAll('<SERVIDOR>', servidor || '<SERVIDOR>')
     .replaceAll('<USUARIO>', usuario || '<USUARIO>')
     .replaceAll('<SENHA>', senha || '<SENHA>')
+}
+
+// Mantém compat para chamadas antigas que passavam só FTP
+function montarExemploFtp(fabricante, servidor, usuario, senha) {
+  return montarExemploPush('ftp_push', fabricante, servidor, usuario, senha)
 }
 
 // Extrai mensagem útil do err do axios. Cobre 3 formatos:
@@ -245,7 +337,9 @@ export default function Devices() {
 
   function openNew() { setForm(BLANK); setMostrarSenha(false); setConfirmandoFab(false); setModal('new') }
   function openNewFtp() {
-    setForm({ ...BLANK, protocolo: 'ftp_push', porta: 21 })
+    // SFTP é o default recomendado (criptografado). Admin troca se equipamento
+    // não suportar SFTP, caindo pra FTP ou TFTP.
+    setForm({ ...BLANK, protocolo: 'sftp_push', porta: DEFAULT_PORTS.sftp_push })
     setMostrarSenha(false); setConfirmandoFab(false); setModal('new-ftp')
   }
   function openEdit(d) {
@@ -272,8 +366,8 @@ export default function Devices() {
     setLoading(true)
     try {
       const isTelnet = form.protocolo === 'telnet'
-      const isFtp = form.protocolo === 'ftp_push'
-      const authMethod = (isTelnet || isFtp) ? 'password' : (form.auth_method || 'password')
+      const isPush = PUSH_PROTOCOLS.includes(form.protocolo)
+      const authMethod = (isTelnet || isPush) ? 'password' : (form.auth_method || 'password')
       const payload = {
         nome: form.nome,
         ip: form.ip,
@@ -285,7 +379,7 @@ export default function Devices() {
         auth_method: authMethod,
         empresa_id: empresa?.id,
       }
-      if (isFtp) {
+      if (isPush) {
         payload.ftp_origem_cidr = form.ftp_origem_cidr
       } else if (authMethod === 'ssh_key') {
         if (form.chave_privada && form.chave_privada.trim()) payload.chave_privada = form.chave_privada
@@ -363,9 +457,9 @@ export default function Devices() {
         {canEdit && (
           <div className="flex items-center gap-2">
             <button onClick={openNewFtp}
-              title="Cadastrar dispositivo cujo backup chega via FTP push"
+              title="Cadastrar dispositivo cujo backup chega via push (FTP, SFTP ou TFTP)"
               className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-              <Upload size={16} /> Novo via FTP
+              <Upload size={16} /> Novo via Upload
             </button>
             <button onClick={openNew}
               title="Cadastrar dispositivo coletado por SSH ou Telnet"
@@ -471,9 +565,13 @@ export default function Devices() {
                       ? 'bg-orange-500/20 text-orange-400'
                       : d.protocolo === 'ftp_push'
                         ? 'bg-violet-500/20 text-violet-300'
-                        : 'bg-sky-500/20 text-sky-400'
+                        : d.protocolo === 'sftp_push'
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : d.protocolo === 'tftp_push'
+                            ? 'bg-orange-500/20 text-orange-300'
+                            : 'bg-sky-500/20 text-sky-400'
                   }`}>
-                    {d.protocolo === 'ftp_push' && <Upload size={11} />}
+                    {PUSH_PROTOCOLS.includes(d.protocolo) && <Upload size={11} />}
                     {PROTOCOL_LABEL[d.protocolo] || 'SSH'}
                   </span>
                 </td>
@@ -499,16 +597,16 @@ export default function Devices() {
                 {canEdit && (
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2 justify-end">
-                      {d.protocolo !== 'ftp_push' && (
+                      {!PUSH_PROTOCOLS.includes(d.protocolo) && (
                         <button onClick={() => runBackup(d.id)} disabled={runningId === d.id}
                           title="Executar backup agora"
                           className="p-1.5 text-emerald-400 hover:bg-emerald-500/20 rounded transition-colors">
                           {runningId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
                         </button>
                       )}
-                      {d.protocolo === 'ftp_push' && (
+                      {(d.protocolo === 'ftp_push' || d.protocolo === 'sftp_push') && (
                         <button onClick={() => regenerarCredencialFtp(d)}
-                          title="Regenerar credencial FTP"
+                          title={`Regenerar credencial ${d.protocolo === 'sftp_push' ? 'SFTP' : 'FTP'}`}
                           className="p-1.5 text-violet-300 hover:bg-violet-500/20 rounded transition-colors">
                           <RefreshCw size={15} />
                         </button>
@@ -680,7 +778,7 @@ export default function Devices() {
               <div className="flex items-center gap-3">
                 <h2 className="font-semibold text-white">
                   {modal === 'new' ? 'Novo Dispositivo'
-                    : modal === 'new-ftp' ? 'Novo Dispositivo via FTP'
+                    : modal === 'new-ftp' ? 'Novo Dispositivo via Upload'
                     : 'Editar Dispositivo'}
                 </h2>
                 {modal !== 'new' && typeof modal === 'number' && (
@@ -695,8 +793,15 @@ export default function Devices() {
               {[
                 { label: 'Nome', key: 'nome', placeholder: 'Router-Core-SP' },
                 { label: 'IP (IPv4 ou IPv6)', key: 'ip', placeholder: '192.168.1.1 ou 2001:db8::1' },
-                { label: form.protocolo === 'ftp_push' ? 'Porta FTP' : 'Porta SSH', key: 'porta', placeholder: form.protocolo === 'ftp_push' ? '21' : '22', type: 'number' },
-                ...(form.protocolo === 'ftp_push' ? [] : [
+                {
+                  label: PUSH_PROTOCOLS.includes(form.protocolo)
+                    ? `Porta ${PUSH_PROTO_INFO[form.protocolo]?.label || 'Push'}`
+                    : 'Porta SSH',
+                  key: 'porta',
+                  placeholder: String(DEFAULT_PORTS[form.protocolo] || 22),
+                  type: 'number',
+                },
+                ...(PUSH_PROTOCOLS.includes(form.protocolo) ? [] : [
                   { label: 'Usuário SSH', key: 'usuario_ssh', placeholder: 'admin' },
                 ]),
               ].map(({ label, key, placeholder, type = 'text' }) => (
@@ -707,40 +812,82 @@ export default function Devices() {
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors" />
                 </div>
               ))}
-              {form.protocolo === 'ftp_push' && (
+              {PUSH_PROTOCOLS.includes(form.protocolo) && (
                 <>
                   <div className="bg-violet-500/5 border border-violet-500/30 rounded-lg p-3 text-xs text-slate-300">
                     <div className="flex items-start gap-2">
                       <Upload size={14} className="text-violet-300 shrink-0 mt-0.5" />
                       <div>
                         <p className="font-medium text-white">Modo recebimento</p>
-                        <p className="mt-1">O servidor não conecta no equipamento — o equipamento envia o backup pra cá via FTP. Após salvar, você verá user e senha gerados pra configurar no equipamento.</p>
+                        <p className="mt-1">O servidor não conecta no equipamento — o equipamento envia o backup pra cá. Escolha o protocolo conforme o suporte do equipamento.</p>
                       </div>
                     </div>
                   </div>
                   <div>
+                    <label className="block text-sm text-slate-400 mb-1.5">Protocolo de upload</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {PUSH_PROTOCOLS.map(p => {
+                        const info = PUSH_PROTO_INFO[p]
+                        const ativo = form.protocolo === p
+                        return (
+                          <button
+                            type="button"
+                            key={p}
+                            onClick={() => setForm(f => ({
+                              ...f,
+                              protocolo: p,
+                              porta: DEFAULT_PORTS[p],
+                              // TFTP exige /32 — limpa CIDR /24 se admin trocou pra TFTP
+                              ftp_origem_cidr: p === 'tftp_push' && f.ftp_origem_cidr?.endsWith('/24')
+                                ? ''
+                                : f.ftp_origem_cidr,
+                            }))}
+                            className={`flex flex-col items-center gap-0.5 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                              ativo
+                                ? 'bg-slate-700 border-violet-500 text-white'
+                                : 'bg-slate-900 border-slate-600 text-slate-400 hover:border-slate-500'
+                            }`}
+                          >
+                            <span className={info.cor}>{info.label}</span>
+                            <span className="text-[10px] text-slate-500">porta {info.porta}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1.5">
+                      {PUSH_PROTO_INFO[form.protocolo]?.desc}
+                    </p>
+                  </div>
+                  <div>
                     <label className="block text-sm text-slate-400 mb-1.5">
                       IP de origem permitido (CIDR IPv4)
+                      {form.protocolo === 'tftp_push' && (
+                        <span className="text-xs text-orange-300 ml-1">
+                          — obrigatoriamente /32 para TFTP
+                        </span>
+                      )}
                     </label>
                     <input
                       type="text"
                       value={form.ftp_origem_cidr || ''}
                       onChange={e => setForm(f => ({ ...f, ftp_origem_cidr: e.target.value }))}
-                      placeholder="187.123.45.10/32 ou 187.123.45.0/24"
+                      placeholder={form.protocolo === 'tftp_push' ? '187.123.45.10/32' : '187.123.45.10/32 ou 187.123.45.0/24'}
                       className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-violet-500 transition-colors"
                     />
                     <p className="text-xs text-slate-500 mt-1">
-                      Apenas conexões originadas deste range serão aceitas. Use /32 para um IP fixo, /24 para uma faixa.
+                      {form.protocolo === 'tftp_push'
+                        ? 'TFTP é anonymous — o IP é a única identificação do device. /24 daria ambiguidade entre vários devices na mesma faixa.'
+                        : 'Apenas conexões originadas deste range serão aceitas. Use /32 para um IP fixo, /24 para uma faixa.'}
                     </p>
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-sm text-slate-400">
-                        Exemplo de configuração — <span className="capitalize text-violet-300">{FTP_EXAMPLES[form.fabricante]?.titulo || form.fabricante}</span>
+                        Exemplo {PUSH_PROTO_INFO[form.protocolo]?.label} — <span className="capitalize text-violet-300">{labelFabricante(form.fabricante)}</span>
                       </label>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(montarExemploFtp(form.fabricante, window.location.hostname))}
+                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, window.location.hostname))}
                         title="Copiar comando"
                         className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
                       >
@@ -748,16 +895,18 @@ export default function Devices() {
                       </button>
                     </div>
                     <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
-                      {montarExemploFtp(form.fabricante, window.location.hostname)}
+                      {montarExemploPush(form.protocolo, form.fabricante, window.location.hostname)}
                     </pre>
                     <p className="text-xs text-slate-500 mt-1">
-                      Após salvar, você verá o mesmo comando já com usuário e senha gerados. Adapte ao firmware específico se necessário.
+                      {form.protocolo === 'tftp_push'
+                        ? 'TFTP não usa user/senha — só o IP de origem identifica o device.'
+                        : 'Após salvar, você verá o mesmo comando já com usuário e senha gerados. Adapte ao firmware específico se necessário.'}
                     </p>
                   </div>
                 </>
               )}
 
-              {form.protocolo !== 'telnet' && form.protocolo !== 'ftp_push' && (
+              {form.protocolo !== 'telnet' && !PUSH_PROTOCOLS.includes(form.protocolo) && (
                 <div>
                   <label className="block text-sm text-slate-400 mb-1.5">Método de autenticação</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -782,7 +931,7 @@ export default function Devices() {
                 </div>
               )}
 
-              {form.protocolo !== 'ftp_push' && (form.protocolo === 'telnet' || form.auth_method !== 'ssh_key') && (
+              {!PUSH_PROTOCOLS.includes(form.protocolo) && (form.protocolo === 'telnet' || form.auth_method !== 'ssh_key') && (
                 <div>
                   <label className="block text-sm text-slate-400 mb-1.5">
                     Senha {form.protocolo !== 'telnet' && form.auth_method === 'password' ? 'SSH' : ''}
@@ -894,11 +1043,13 @@ export default function Devices() {
                 <label className="block text-sm text-slate-400 mb-1.5">Protocolo de coleta</label>
                 <div className="flex flex-col gap-2">
                   {[
-                    { p: 'ssh', cls: 'text-sky-400', desc: 'servidor conecta via SSH' },
-                    { p: 'telnet', cls: 'text-orange-400', desc: 'servidor conecta via Telnet (legado)' },
-                    { p: 'ftp_push', cls: 'text-violet-300', desc: 'equipamento envia o backup pro servidor' },
-                  // ftp_push só aparece em modo edição (já que tem botão dedicado pro novo)
-                  ].filter(({ p }) => modal === 'new' ? p !== 'ftp_push' : true).map(({ p, cls, desc }) => (
+                    { p: 'ssh',       cls: 'text-sky-400',     desc: 'servidor conecta via SSH' },
+                    { p: 'telnet',    cls: 'text-orange-400',  desc: 'servidor conecta via Telnet (legado)' },
+                    { p: 'sftp_push', cls: 'text-emerald-300', desc: 'equipamento envia via SFTP (criptografado)' },
+                    { p: 'ftp_push',  cls: 'text-violet-300',  desc: 'equipamento envia via FTP (plano)' },
+                    { p: 'tftp_push', cls: 'text-orange-300',  desc: 'equipamento envia via TFTP (sem auth)' },
+                  // Push só aparece em modo edição (já tem botão dedicado pro novo)
+                  ].filter(({ p }) => modal === 'new' ? !PUSH_PROTOCOLS.includes(p) : true).map(({ p, cls, desc }) => (
                     <label key={p} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="radio"
@@ -909,8 +1060,8 @@ export default function Devices() {
                           ...f,
                           protocolo: p,
                           porta: f.porta === DEFAULT_PORTS[f.protocolo] ? DEFAULT_PORTS[p] : f.porta,
-                          // Telnet/FTP não suportam chave SSH — força senha
-                          auth_method: (p === 'telnet' || p === 'ftp_push') ? 'password' : f.auth_method,
+                          // Telnet/Push não usam chave SSH — força senha
+                          auth_method: (p === 'telnet' || PUSH_PROTOCOLS.includes(p)) ? 'password' : f.auth_method,
                         }))}
                         className="accent-sky-500"
                       />

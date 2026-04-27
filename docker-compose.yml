@@ -23,15 +23,25 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
-    # FTP push: porta de controle (21) + faixa passiva (30000-30099). Equipamentos
-    # da empresa enviam o backup direto para essas portas; o backend valida user,
-    # senha e IP de origem antes de aceitar o arquivo.
+    # Backup push: equipamentos enviam o backup pra cá.
+    # - 21/tcp: FTP controle (passive na faixa 30000-30099 abaixo)
+    # - 2222/tcp: SFTP (porta 22 colide com SSH do host, por isso 2222)
+    # - 69/udp: TFTP (resposta vem da mesma faixa 30000-30099 — UDP só pra
+    #   sessões TFTP, mas funciona porque conntrack do iptables bate)
+    # - 30000-30099/tcp+udp: faixa passiva (FTP) + portas efêmeras (TFTP)
     ports:
       - "21:21"
+      - "2222:2222"
+      - "69:69/udp"
       - "30000-30099:30000-30099"
+      - "30000-30099:30000-30099/udp"
     volumes:
-      # Logs de auth FTP em arquivo para o fail2ban (no host) tailar.
+      # Logs de auth FTP/SFTP em arquivo para o fail2ban (no host) tailar.
       - ./infra/ftp-logs:/var/log/nexus
+      # State persistente: host key SFTP (RSA-2048 gerada no primeiro start).
+      # Se perder, equipamentos vão acusar fingerprint diferente no próximo
+      # connect — daria pra forçar re-aceitação mas é melhor evitar.
+      - ./infra/state:/var/lib/nexus
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}

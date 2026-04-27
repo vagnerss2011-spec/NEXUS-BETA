@@ -1,0 +1,280 @@
+"""Servidor SFTP embutido — versão criptografada do FTP push.
+
+Roda em uma thread daemon usando paramiko como SSH server. Compartilha
+auth log, push_backup helper e DBSession síncrona com o servidor FTP.
+
+Camadas de defesa idênticas ao FTP:
+- IP de origem precisa casar com Device.ftp_origem_cidr
+- Senha valida contra Device.ftp_senha_enc (Fernet decrypt)
+- Permissões: APENAS upload (open com flag de write). list/stat/remove/
+  mkdir/rename/symlink retornam SFTP_PERMISSION_DENIED.
+- Tamanho máximo: 5MB
+- Após upload válido: chama processar_upload (mesmo dedupe diário, retenção
+  e audit do FTP)
+
+Diferenças do FTP:
+- Transporte criptografado por SSH (chave de host Ed25519/RSA persistida)
+- Porta 2222 externa (22 colide com SSH do host)
+- Cada conexão roda em thread separada
+"""
+import os
+import io
+import socket
+import threading
+import logging
+import tempfile
+import paramiko
+from sqlalchemy import select
+from models import Device, Protocolo
+from services.crypto import decrypt
+from services.ftp_server import auth_log, _ip_match, MAX_FILE_SIZE
+from services.push_backup import (
+    SyncSessionLocal, processar_upload, auditar_acesso_negado,
+)
+
+log = logging.getLogger("nexus.sftp")
+
+SFTP_HOST_KEY_PATH = "/var/lib/nexus/sftp_host_key"
+SFTP_PORT = 2222
+SFTP_UPLOAD_DIR = "/var/ftp/sftp-uploads"
+
+
+def _load_or_create_host_key() -> paramiko.PKey:
+    """Carrega a chave de host SFTP do disco; gera RSA-2048 se não existir.
+    Persistir é importante — equipamentos guardam fingerprint da primeira
+    conexão e reclamam se mudar a cada restart."""
+    os.makedirs(os.path.dirname(SFTP_HOST_KEY_PATH), exist_ok=True)
+    if os.path.isfile(SFTP_HOST_KEY_PATH):
+        try:
+            return paramiko.RSAKey.from_private_key_file(SFTP_HOST_KEY_PATH)
+        except Exception as e:
+            log.warning("Host key existente inválida (%s) — gerando nova", e)
+    key = paramiko.RSAKey.generate(2048)
+    key.write_private_key_file(SFTP_HOST_KEY_PATH)
+    log.info("Nova host key SFTP gerada em %s", SFTP_HOST_KEY_PATH)
+    return key
+
+
+class NexusSSHServerInterface(paramiko.ServerInterface):
+    """Interface do SSH (não SFTP) — cuida da autenticação e abertura do canal."""
+
+    def __init__(self, client_ip: str):
+        self.client_ip = client_ip
+        self.username: str | None = None
+        self.device_id: int | None = None
+        self.device_empresa_id: int | None = None
+        self.device_nome: str | None = None
+        self.event = threading.Event()
+
+    def get_allowed_auths(self, username):
+        return "password"
+
+    def check_auth_password(self, username, password):
+        with SyncSessionLocal() as db:
+            dev = db.execute(
+                select(Device).where(Device.ftp_user == username)
+            ).scalar_one_or_none()
+            if not dev or not dev.ativo or dev.protocolo != Protocolo.sftp_push or not dev.ftp_senha_enc:
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", self.client_ip, username)
+                auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=None,
+                                      detalhe="usuário SFTP inexistente ou device desabilitado")
+                return paramiko.AUTH_FAILED
+            try:
+                senha_real = decrypt(dev.ftp_senha_enc)
+            except Exception:
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=decrypt_error", self.client_ip, username)
+                return paramiko.AUTH_FAILED
+            if password != senha_real:
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", self.client_ip, username)
+                auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                      detalhe="senha incorreta")
+                return paramiko.AUTH_FAILED
+            if not _ip_match(self.client_ip, dev.ftp_origem_cidr):
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", self.client_ip, username)
+                auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                      detalhe=f"IP {self.client_ip} fora da whitelist {dev.ftp_origem_cidr}")
+                return paramiko.AUTH_FAILED
+        self.username = username
+        self.device_id = dev.id
+        self.device_empresa_id = dev.empresa_id
+        self.device_nome = dev.nome
+        return paramiko.AUTH_SUCCESSFUL
+
+    def check_channel_request(self, kind, chanid):
+        if kind == "session":
+            return paramiko.OPEN_SUCCEEDED
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+
+class NexusSFTPHandle(paramiko.SFTPHandle):
+    """Handle de upload — escreve o conteúdo num temp file e dispara o
+    processamento quando o cliente fecha o handle."""
+
+    def __init__(self, server_iface: "NexusSFTPServerInterface", flags: int):
+        super().__init__(flags)
+        self.server_iface = server_iface
+        # Temp file isolado por upload (não interfere com outros)
+        fd, self.tmp_path = tempfile.mkstemp(prefix="sftp-", dir=SFTP_UPLOAD_DIR)
+        self.f = os.fdopen(fd, "wb+")
+        self.writefile = self.f
+        self.readfile = self.f  # alguns clientes abrem RDWR
+        self.fechou = False
+
+    def close(self):
+        if self.fechou:
+            return
+        self.fechou = True
+        try:
+            self.f.flush()
+            self.f.close()
+            self.server_iface.processar_upload_local(self.tmp_path)
+        except Exception:
+            log.exception("Falha ao processar upload SFTP de %s", self.server_iface.ssh_server.username)
+        finally:
+            try:
+                os.unlink(self.tmp_path)
+            except OSError:
+                pass
+            super().close()
+
+
+class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
+    """Implementa o SFTP — só permite upload (STOR via open com write flag)."""
+
+    def __init__(self, server, *args, **kwargs):
+        super().__init__(server, *args, **kwargs)
+        self.ssh_server: NexusSSHServerInterface = server
+
+    def open(self, path, flags, attr):
+        # Aceita só abertura para escrita. Read-only é negado.
+        if not (flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC)):
+            return paramiko.SFTP_PERMISSION_DENIED
+        try:
+            return NexusSFTPHandle(self, flags)
+        except Exception:
+            log.exception("Falha ao abrir handle de upload")
+            return paramiko.SFTP_FAILURE
+
+    def processar_upload_local(self, tmp_path: str):
+        try:
+            tamanho = os.path.getsize(tmp_path)
+        except OSError:
+            return
+        if tamanho == 0 or tamanho > MAX_FILE_SIZE:
+            log.warning("SFTP upload de %s rejeitado: tamanho=%s",
+                        self.ssh_server.username, tamanho)
+            return
+        with open(tmp_path, "r", errors="replace") as f:
+            conteudo = f.read()
+        with SyncSessionLocal() as db:
+            dev = db.execute(
+                select(Device).where(Device.id == self.ssh_server.device_id)
+            ).scalar_one_or_none()
+            if not dev:
+                return
+            processar_upload(dev, conteudo, self.ssh_server.client_ip, tamanho, db)
+            db.commit()
+
+    # Operações negadas — SFTP é write-only do lado do cliente.
+    def list_folder(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    def stat(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    def lstat(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    def remove(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    def mkdir(self, path, attr): return paramiko.SFTP_PERMISSION_DENIED
+    def rmdir(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    def chattr(self, path, attr): return paramiko.SFTP_PERMISSION_DENIED
+    def rename(self, oldpath, newpath): return paramiko.SFTP_PERMISSION_DENIED
+    def readlink(self, path): return paramiko.SFTP_PERMISSION_DENIED
+    def symlink(self, target_path, path): return paramiko.SFTP_PERMISSION_DENIED
+
+
+def _handle_client(client_sock: socket.socket, client_addr: tuple, host_key: paramiko.PKey):
+    client_ip = client_addr[0]
+    transport = None
+    try:
+        transport = paramiko.Transport(client_sock)
+        transport.add_server_key(host_key)
+        transport.set_subsystem_handler("sftp", paramiko.SFTPServer, NexusSFTPServerInterface)
+        ssh_iface = NexusSSHServerInterface(client_ip=client_ip)
+        try:
+            transport.start_server(server=ssh_iface)
+        except paramiko.SSHException:
+            log.warning("Negociação SSH falhou com %s", client_ip)
+            return
+        # Espera o canal ser aberto + autenticado + subsystem ativado.
+        chan = transport.accept(60)
+        if chan is None:
+            return
+        # Mantém a conexão viva enquanto o cliente faz uploads.
+        while transport.is_active():
+            chan.event.wait(timeout=60)
+            if not chan.event.is_set():
+                continue
+            break
+    except Exception:
+        log.exception("Erro na conexão SFTP de %s", client_ip)
+    finally:
+        try:
+            if transport:
+                transport.close()
+        except Exception:
+            pass
+        try:
+            client_sock.close()
+        except Exception:
+            pass
+
+
+_listener_socket: socket.socket | None = None
+_listener_thread: threading.Thread | None = None
+_stopping = False
+
+
+def _accept_loop(host_key: paramiko.PKey):
+    global _stopping
+    assert _listener_socket is not None
+    log.info("SFTP server escutando em 0.0.0.0:%d", SFTP_PORT)
+    while not _stopping:
+        try:
+            client_sock, client_addr = _listener_socket.accept()
+        except OSError:
+            if _stopping:
+                return
+            continue
+        threading.Thread(
+            target=_handle_client, args=(client_sock, client_addr, host_key),
+            name=f"sftp-{client_addr[0]}", daemon=True,
+        ).start()
+
+
+def iniciar_sftp_server() -> None:
+    """Inicia o servidor SFTP em thread daemon. Idempotente."""
+    global _listener_socket, _listener_thread, _stopping
+    if _listener_thread is not None and _listener_thread.is_alive():
+        return
+    os.makedirs(SFTP_UPLOAD_DIR, exist_ok=True)
+    host_key = _load_or_create_host_key()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("0.0.0.0", SFTP_PORT))
+    except OSError as e:
+        log.error("Não foi possível bind em 0.0.0.0:%d — %s", SFTP_PORT, e)
+        return
+    sock.listen(64)
+    _listener_socket = sock
+    _stopping = False
+    _listener_thread = threading.Thread(target=_accept_loop, args=(host_key,),
+                                        name="sftp-listener", daemon=True)
+    _listener_thread.start()
+
+
+def parar_sftp_server() -> None:
+    global _listener_socket, _stopping
+    _stopping = True
+    if _listener_socket is not None:
+        try:
+            _listener_socket.close()
+        except Exception:
+            pass
+        _listener_socket = None

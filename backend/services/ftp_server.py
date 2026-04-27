@@ -16,53 +16,45 @@ import os
 import threading
 import logging
 import logging.handlers
-from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_network
-from sqlalchemy import create_engine, select, delete, func
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy import select
 from pyftpdlib.authorizers import DummyAuthorizer, AuthenticationFailed
 from pyftpdlib.handlers import FTPHandler
 from pyftpdlib.servers import ThreadedFTPServer
-from config import settings
-from models import Device, Backup, Atividade, TipoAtividade, Protocolo
+from models import Device, Protocolo
 from services.crypto import decrypt
+from services.push_backup import (
+    SyncSessionLocal, processar_upload, auditar_acesso_negado,
+)
 
 log = logging.getLogger("nexus.ftp")
 
-# Logger dedicado pra falhas de autenticação. Escreve em arquivo dentro de
-# /var/log/nexus (volume montado do host) num formato simples que o fail2ban
-# consegue parsear via regex. Cada linha: "<timestamp> [LEVEL] AUTH_FAIL ip=X user=Y reason=...".
+# Logger compartilhado por FTP e SFTP — fail2ban tail nesse arquivo via jail
+# nexus-ftp. Cada linha: "<timestamp> [LEVEL] AUTH_FAIL ip=X user=Y reason=...".
+# Module-level pra que sftp_server importe e use o mesmo handler.
 auth_log = logging.getLogger("nexus.ftp.auth")
 auth_log.setLevel(logging.WARNING)
-auth_log.propagate = False  # não duplica nos logs do uvicorn
+auth_log.propagate = False
 
 _LOG_DIR = "/var/log/nexus"
 _LOG_FILE = os.path.join(_LOG_DIR, "ftp-auth.log")
-try:
-    os.makedirs(_LOG_DIR, exist_ok=True)
-    _handler = logging.handlers.RotatingFileHandler(
-        _LOG_FILE, maxBytes=10_000_000, backupCount=3, encoding="utf-8"
-    )
-    _handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
-    auth_log.addHandler(_handler)
-except Exception as e:
-    # Sem volume mount disponível: cai pra stderr (não quebra o servidor)
-    log.warning("Não foi possível abrir %s: %s — auth log vai pra stderr", _LOG_FILE, e)
-    auth_log.addHandler(logging.StreamHandler())
-
-# Engine síncrono dedicado. A DATABASE_URL é configurada com +asyncpg para
-# o resto do app; aqui trocamos pelo driver síncrono (psycopg2-binary já
-# está no requirements).
-_sync_url = settings.DATABASE_URL.replace("+asyncpg", "+psycopg2")
-sync_engine = create_engine(_sync_url, pool_size=5, max_overflow=10, pool_pre_ping=True)
-SyncSessionLocal = sessionmaker(sync_engine, autoflush=False, autocommit=False)
+if not auth_log.handlers:  # idempotente se reimportado
+    try:
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        _handler = logging.handlers.RotatingFileHandler(
+            _LOG_FILE, maxBytes=10_000_000, backupCount=3, encoding="utf-8"
+        )
+        _handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        auth_log.addHandler(_handler)
+    except Exception as e:
+        log.warning("Não foi possível abrir %s: %s — auth log vai pra stderr", _LOG_FILE, e)
+        auth_log.addHandler(logging.StreamHandler())
 
 FTP_UPLOAD_DIR = "/var/ftp/uploads"
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
-VOLUME_ALTO_LIMITE = 5            # uploads/24h que disparam alerta
 
 
 def _ip_match(remote_ip: str, allowed_cidr: str | None) -> bool:
@@ -72,17 +64,6 @@ def _ip_match(remote_ip: str, allowed_cidr: str | None) -> bool:
         return ip_address(remote_ip) in ip_network(allowed_cidr.strip(), strict=False)
     except Exception:
         return False
-
-
-def _audit(db: Session, tipo: TipoAtividade, ip: str | None,
-           alvo_nome: str | None = None, empresa_id: int | None = None,
-           detalhe: str | None = None):
-    db.add(Atividade(
-        tipo=tipo, usuario_id=None, usuario_nome="ftp",
-        empresa_id=empresa_id, ip=ip, alvo_tipo="device",
-        alvo_nome=alvo_nome, detalhe=detalhe,
-    ))
-    db.commit()
 
 
 class DBAuthorizer(DummyAuthorizer):
@@ -96,8 +77,8 @@ class DBAuthorizer(DummyAuthorizer):
             ).scalar_one_or_none()
             if not dev or not dev.ativo or dev.protocolo != Protocolo.ftp_push or not dev.ftp_senha_enc:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", ip, username)
-                _audit(db, TipoAtividade.ftp_acesso_negado, ip, alvo_nome=username,
-                       detalhe="usuário FTP inexistente ou device desabilitado")
+                auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=None,
+                                      detalhe="usuário FTP inexistente ou device desabilitado")
                 raise AuthenticationFailed("Authentication failed.")
             try:
                 senha_real = decrypt(dev.ftp_senha_enc)
@@ -106,14 +87,13 @@ class DBAuthorizer(DummyAuthorizer):
                 raise AuthenticationFailed("Authentication failed.")
             if password != senha_real:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
-                _audit(db, TipoAtividade.ftp_acesso_negado, ip, alvo_nome=username,
-                       empresa_id=dev.empresa_id, detalhe="senha incorreta")
+                auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                      detalhe="senha incorreta")
                 raise AuthenticationFailed("Authentication failed.")
             if not _ip_match(ip, dev.ftp_origem_cidr):
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
-                _audit(db, TipoAtividade.ftp_acesso_negado, ip, alvo_nome=username,
-                       empresa_id=dev.empresa_id,
-                       detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}")
+                auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                      detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}")
                 raise AuthenticationFailed("Authentication failed.")
 
     def get_home_dir(self, username):
@@ -185,64 +165,7 @@ class NexusFTPHandler(FTPHandler):
             ).scalar_one_or_none()
             if not dev:
                 return
-
-            # Dedupe diário: substitui qualquer backup do dia atual.
-            agora = datetime.now(timezone.utc)
-            inicio_dia = agora.replace(hour=0, minute=0, second=0, microsecond=0)
-            db.execute(
-                delete(Backup).where(
-                    Backup.device_id == dev.id,
-                    Backup.criado_em >= inicio_dia,
-                )
-            )
-
-            db.add(Backup(
-                device_id=dev.id, status="sucesso", conteudo=conteudo,
-                erro=None, log_scheduler_id=None,
-            ))
-
-            # Retenção: mantém últimos N (BACKUP_RETENTION_DAYS), apaga o resto.
-            ids_excedentes = db.execute(
-                select(Backup.id)
-                .where(Backup.device_id == dev.id)
-                .order_by(Backup.criado_em.desc())
-                .offset(settings.BACKUP_RETENTION_DAYS)
-            ).scalars().all()
-            if ids_excedentes:
-                db.execute(delete(Backup).where(Backup.id.in_(ids_excedentes)))
-
-            db.add(Atividade(
-                tipo=TipoAtividade.ftp_backup_recebido, usuario_id=None,
-                usuario_nome="ftp", empresa_id=dev.empresa_id, ip=ip,
-                alvo_tipo="device", alvo_nome=dev.nome,
-                detalhe=f"{tamanho} bytes",
-            ))
-
-            # Volume alto: 1 alerta por device por janela de 24h.
-            corte = agora - timedelta(hours=24)
-            uploads = db.execute(
-                select(func.count(Atividade.id)).where(
-                    Atividade.tipo == TipoAtividade.ftp_backup_recebido,
-                    Atividade.alvo_nome == dev.nome,
-                    Atividade.criado_em >= corte,
-                )
-            ).scalar() or 0
-            if uploads >= VOLUME_ALTO_LIMITE:
-                ja = db.execute(
-                    select(Atividade.id).where(
-                        Atividade.tipo == TipoAtividade.ftp_volume_alto,
-                        Atividade.alvo_nome == dev.nome,
-                        Atividade.criado_em >= corte,
-                    )
-                ).scalar_one_or_none()
-                if not ja:
-                    db.add(Atividade(
-                        tipo=TipoAtividade.ftp_volume_alto, usuario_id=None,
-                        usuario_nome="ftp", empresa_id=dev.empresa_id, ip=ip,
-                        alvo_tipo="device", alvo_nome=dev.nome,
-                        detalhe=f"{uploads} uploads em 24h",
-                    ))
-
+            processar_upload(dev, conteudo, ip, tamanho, db)
             db.commit()
 
 

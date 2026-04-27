@@ -28,9 +28,13 @@ class DeviceVendor(str, enum.Enum):
 class Protocolo(str, enum.Enum):
     ssh = "ssh"
     telnet = "telnet"
-    # ftp_push = backend NÃO conecta no equipamento; o equipamento envia o
-    # backup pra cá via FTP. Autenticação por user/senha gerados + IP whitelist.
+    # Modos de PUSH: equipamento envia o backup pro servidor.
+    # ftp_push   = FTP (porta 21, plano, user+senha+IP)
+    # sftp_push  = SFTP via SSH (porta 2222, criptografado, user+senha+IP)
+    # tftp_push  = TFTP (porta 69/UDP, sem auth, IP /32 obrigatório)
     ftp_push = "ftp_push"
+    sftp_push = "sftp_push"
+    tftp_push = "tftp_push"
 
 class AuthMethod(str, enum.Enum):
     password = "password"
