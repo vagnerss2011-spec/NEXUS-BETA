@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, F
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
-const FABRICANTES = ['mikrotik', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'outro']
+const FABRICANTES = ['mikrotik', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'outro']
 const TIPOS = [
   { value: 'roteador', label: 'Roteador' },
   { value: 'olt', label: 'OLT' },
@@ -77,6 +77,35 @@ end`,
     cmd: `set system archival configuration archive-sites \\
     "ftp://<USUARIO>:<SENHA>@<SERVIDOR>" transfer-on-commit
 commit`,
+  },
+  zte: {
+    titulo: 'ZTE (ZXR10 / ZXA10)',
+    cmd: `# Sintaxe varia entre ZXR10 (switch/router) e ZXA10 (OLT GPON).
+# ZXR10 (modo Cisco-like):
+copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-zte.cfg
+
+# ZXA10 OLT (modo legado):
+write
+upload running-configuration ftp <SERVIDOR> <USUARIO> <SENHA> backup-zte.cfg`,
+  },
+  nokia: {
+    titulo: 'Nokia (SR OS / ISAM)',
+    cmd: `# Nokia SR OS (7750/7250):
+admin save ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-nokia.cfg
+
+# Nokia ISAM/7360 (GPON):
+admin save
+file upload running-config \\
+    ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-nokia.cfg`,
+  },
+  fiberhome: {
+    titulo: 'Fiberhome (AN5516 / AN6000)',
+    cmd: `# Fiberhome OLT — comandos variam por firmware. Padrão AN5516:
+upload startupcfg ftp <SERVIDOR> <USUARIO> <SENHA> backup-fiberhome.cfg
+
+# Algumas builds usam:
+cd config
+backup ftp <SERVIDOR> <USUARIO> <SENHA>`,
   },
   outro: {
     titulo: 'Outro fabricante',
