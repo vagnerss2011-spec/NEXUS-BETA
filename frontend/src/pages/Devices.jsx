@@ -273,11 +273,6 @@ function montarExemploPush(protocolo, fabricante, servidor, usuario, senha) {
     .replaceAll('<SENHA>', senha || '<SENHA>')
 }
 
-// Mantém compat para chamadas antigas que passavam só FTP
-function montarExemploFtp(fabricante, servidor, usuario, senha) {
-  return montarExemploPush('ftp_push', fabricante, servidor, usuario, senha)
-}
-
 // Extrai mensagem útil do err do axios. Cobre 3 formatos:
 // - string (HTTPException simples)
 // - array de objetos (Pydantic validation: [{loc, msg, ...}])
@@ -414,11 +409,13 @@ export default function Devices() {
       if (ehCriacao) resp = await api.post('/devices/', payload)
       else resp = await api.put(`/devices/${modal}`, payload)
       fecharModal()
-      // Criação de FTP push retorna ftp_senha em texto puro UMA vez
+      // Criação de FTP/SFTP push retorna ftp_senha em texto puro UMA vez.
+      // (TFTP não cai aqui — não tem credencial.)
       if (resp?.data?.ftp_senha) {
         setCredencialFtp({
           nome: resp.data.nome,
           fabricante: resp.data.fabricante,
+          protocolo: resp.data.protocolo,
           ftp_user: resp.data.ftp_user,
           ftp_senha: resp.data.ftp_senha,
           ftp_origem_cidr: resp.data.ftp_origem_cidr,
@@ -437,6 +434,7 @@ export default function Devices() {
       setCredencialFtp({
         nome: d.nome,
         fabricante: d.fabricante,
+        protocolo: d.protocolo,
         ftp_user: data.ftp_user,
         ftp_senha: data.ftp_senha,
         ftp_origem_cidr: data.ftp_origem_cidr,
@@ -713,7 +711,7 @@ export default function Devices() {
               <div className="flex items-center gap-3">
                 <Key size={20} className="text-violet-300" />
                 <div>
-                  <h2 className="font-semibold text-white">Credencial FTP gerada</h2>
+                  <h2 className="font-semibold text-white">Credencial {PROTOCOL_LABEL[credencialFtp.protocolo] || 'FTP push'} gerada</h2>
                   <p className="text-xs text-slate-400">{credencialFtp.nome}</p>
                 </div>
               </div>
@@ -726,7 +724,7 @@ export default function Devices() {
               </div>
               {[
                 { label: 'Servidor', value: IP_SERVIDOR_BACKUP, mono: true },
-                { label: 'Porta', value: '21' },
+                { label: 'Porta', value: String(DEFAULT_PORTS[credencialFtp.protocolo] ?? 21) },
                 { label: 'Usuário', value: credencialFtp.ftp_user, mono: true },
                 { label: 'Senha', value: credencialFtp.ftp_senha, mono: true },
                 { label: 'IP de origem permitido', value: credencialFtp.ftp_origem_cidr, mono: true },
@@ -755,11 +753,12 @@ export default function Devices() {
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="block text-xs text-slate-400">
-                      Comando para configurar no equipamento — <span className="capitalize text-violet-300">{FTP_EXAMPLES[credencialFtp.fabricante]?.titulo || credencialFtp.fabricante}</span>
+                      Comando para configurar no equipamento — <span className="capitalize text-violet-300">{labelFabricante(credencialFtp.fabricante)}</span>
                     </label>
                     <button
                       type="button"
-                      onClick={() => navigator.clipboard?.writeText(montarExemploFtp(
+                      onClick={() => navigator.clipboard?.writeText(montarExemploPush(
+                        credencialFtp.protocolo,
                         credencialFtp.fabricante,
                         IP_SERVIDOR_BACKUP,
                         credencialFtp.ftp_user,
@@ -772,7 +771,8 @@ export default function Devices() {
                     </button>
                   </div>
                   <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-56 overflow-auto">
-                    {montarExemploFtp(
+                    {montarExemploPush(
+                      credencialFtp.protocolo,
                       credencialFtp.fabricante,
                       IP_SERVIDOR_BACKUP,
                       credencialFtp.ftp_user,
