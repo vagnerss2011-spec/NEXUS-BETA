@@ -72,7 +72,8 @@ DEVICE_TYPES_SSH = {
 }
 
 DEVICE_TYPES_TELNET = {
-    DeviceVendor.mikrotik:  "generic_termserver",
+    DeviceVendor.mikrotik:    "generic_termserver",
+    DeviceVendor.mikrotik_v7: "generic_termserver",
     DeviceVendor.huawei:    "huawei_telnet",
     DeviceVendor.ubiquiti:  "generic_termserver",
     DeviceVendor.intelbras: "cisco_ios_telnet",
@@ -87,7 +88,10 @@ DEVICE_TYPES_TELNET = {
 }
 
 COMMANDS = {
-    DeviceVendor.mikrotik:  "/export",
+    # Mikrotik v6: /export já inclui senhas. Mikrotik v7: precisa de
+    # show-sensitive (caso contrário retorna PSKs/secrets/etc mascarados).
+    DeviceVendor.mikrotik:    "/export",
+    DeviceVendor.mikrotik_v7: "/export show-sensitive",
     DeviceVendor.huawei:    "display current-configuration",
     DeviceVendor.ubiquiti:  "show configuration",
     DeviceVendor.intelbras: "show running-config",
@@ -252,6 +256,10 @@ def _run_huawei_netmiko(device: Device) -> tuple[str, str]:
     return "sucesso", cleaned
 
 def _run_mikrotik_paramiko(device: Device) -> tuple[str, str]:
+    # COMMANDS já mapeia /export e /export show-sensitive por versão.
+    # Usado direto via Paramiko porque Netmiko quebra a detecção de prompt
+    # do RouterOS quando o output é grande.
+    cmd = COMMANDS.get(device.fabricante, "/export")
     client = SSHClient()
     client.set_missing_host_key_policy(AutoAddPolicy())
     connect_kwargs: dict = dict(
@@ -276,7 +284,7 @@ def _run_mikrotik_paramiko(device: Device) -> tuple[str, str]:
         connect_kwargs["password"] = decrypt(device.senha_ssh_enc)
     try:
         client.connect(**connect_kwargs)
-        _, stdout, stderr = client.exec_command("/export", timeout=60)
+        _, stdout, stderr = client.exec_command(cmd, timeout=60)
         output = stdout.read().decode("utf-8", errors="replace")
         if not output.strip():
             err = stderr.read().decode("utf-8", errors="replace")
@@ -291,7 +299,7 @@ def run_backup(device: Device) -> tuple[str, str]:
     if is_telnet and device.auth_method == AuthMethod.ssh_key:
         return "falha", "Telnet não suporta autenticação por chave SSH — altere o protocolo para SSH ou use senha."
     try:
-        if device.fabricante == DeviceVendor.mikrotik and not is_telnet:
+        if device.fabricante in (DeviceVendor.mikrotik, DeviceVendor.mikrotik_v7) and not is_telnet:
             return _run_mikrotik_paramiko(device)
 
         if device.fabricante == DeviceVendor.datacom:

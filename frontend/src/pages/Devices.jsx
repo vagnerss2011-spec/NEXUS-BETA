@@ -3,7 +3,17 @@ import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, F
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
-const FABRICANTES = ['mikrotik', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'vsolutions', 'outro']
+const FABRICANTES = ['mikrotik', 'mikrotik_v7', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'vsolutions', 'outro']
+
+// Label customizado pra fabricantes cujo nome interno (snake_case) ficaria
+// estranho ao só capitalizar. Sem entrada → cai no capitalize CSS.
+const FABRICANTE_LABEL = {
+  mikrotik_v7: 'Mikrotik V7',
+  vsolutions: 'VSolutions',
+}
+function labelFabricante(f) {
+  return FABRICANTE_LABEL[f] || f
+}
 
 // Fabricantes que só fazem sentido com um tipo específico (lock).
 // Ex.: VSolutions só fabrica OLT GPON — sem roteador/switch/wireless.
@@ -33,9 +43,22 @@ const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push' }
 // nuances do firmware específico.
 const FTP_EXAMPLES = {
   mikrotik: {
-    titulo: 'Mikrotik RouterOS',
-    cmd: `/system scheduler add name=backup-nexus interval=1d \\
+    titulo: 'Mikrotik RouterOS v6',
+    cmd: `# RouterOS v6 — /export já inclui senhas/PSKs por padrão.
+/system scheduler add name=backup-nexus interval=1d \\
   on-event="/export file=cfg-backup; \\
+            /tool fetch upload=yes mode=ftp \\
+              address=<SERVIDOR> port=21 \\
+              user=<USUARIO> password=<SENHA> \\
+              src-path=cfg-backup.rsc \\
+              dst-path=backup-mikrotik.rsc"`,
+  },
+  mikrotik_v7: {
+    titulo: 'Mikrotik RouterOS v7',
+    cmd: `# RouterOS v7 — /export mascara senhas por padrão. Use show-sensitive
+# para incluir secrets/PSKs/credenciais no arquivo exportado.
+/system scheduler add name=backup-nexus interval=1d \\
+  on-event="/export show-sensitive file=cfg-backup; \\
             /tool fetch upload=yes mode=ftp \\
               address=<SERVIDOR> port=21 \\
               user=<USUARIO> password=<SENHA> \\
@@ -364,7 +387,7 @@ export default function Devices() {
         >
           <option value="todos">Todos os fabricantes</option>
           {fabricantesDisponiveis.map(f => (
-            <option key={f} value={f} className="capitalize">{f}</option>
+            <option key={f} value={f} className="capitalize">{labelFabricante(f)}</option>
           ))}
         </select>
         <select
@@ -423,7 +446,7 @@ export default function Devices() {
                   </span>
                 </td>
                 <td className="px-5 py-3.5">
-                  <span className="capitalize text-slate-300">{d.fabricante}</span>
+                  <span className="capitalize text-slate-300">{labelFabricante(d.fabricante)}</span>
                 </td>
                 <td className="px-5 py-3.5">
                   <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium ${
@@ -818,7 +841,7 @@ export default function Devices() {
                   Tipo de equipamento
                   {FABRICANTE_TIPO_FIXO[form.fabricante] && (
                     <span className="text-xs text-slate-500 ml-1">
-                      (fixo para {form.fabricante})
+                      (fixo para {labelFabricante(form.fabricante)})
                     </span>
                   )}
                 </label>
@@ -846,7 +869,7 @@ export default function Devices() {
                   }}
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
                 >
-                  {FABRICANTES.map(f => <option key={f} value={f} className="capitalize">{f}</option>)}
+                  {FABRICANTES.map(f => <option key={f} value={f} className="capitalize">{labelFabricante(f)}</option>)}
                 </select>
               </div>
               {modal !== 'new-ftp' && (
@@ -891,7 +914,7 @@ export default function Devices() {
                   <div className="text-sm">
                     <p className="text-white font-medium">Confirme o fabricante</p>
                     <p className="text-slate-400 mt-1">
-                      Você selecionou: <span className="capitalize text-amber-300 font-semibold">{form.fabricante}</span>
+                      Você selecionou: <span className="capitalize text-amber-300 font-semibold">{labelFabricante(form.fabricante)}</span>
                     </p>
                     <p className="text-xs text-slate-500 mt-2">
                       O comando de coleta de backup depende deste valor — escolha errada gera falha ou backup incorreto.

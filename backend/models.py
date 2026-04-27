@@ -11,7 +11,8 @@ class UserRole(str, enum.Enum):
     viewer = "viewer"
 
 class DeviceVendor(str, enum.Enum):
-    mikrotik = "mikrotik"
+    mikrotik = "mikrotik"        # RouterOS v6 — /export inclui senhas por default
+    mikrotik_v7 = "mikrotik_v7"  # RouterOS v7 — /export mascara senhas; precisa de show-sensitive
     huawei = "huawei"
     ubiquiti = "ubiquiti"
     intelbras = "intelbras"
