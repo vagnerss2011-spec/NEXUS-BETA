@@ -93,7 +93,9 @@ class Device(Base):
     fabricante = Column(Enum(DeviceVendor), default=DeviceVendor.outro)
     tipo = Column(Enum(DeviceTipo), default=DeviceTipo.roteador, nullable=False)
     protocolo = Column(Enum(Protocolo), default=Protocolo.ssh, nullable=False)
-    usuario_ssh = Column(String(100), nullable=False)
+    # usuario_ssh é nullable porque devices via ftp_push não têm usuário SSH.
+    # Pra SSH/Telnet o router exige no validate; pra ftp_push fica null.
+    usuario_ssh = Column(String(100), nullable=True)
     # senha agora é nullable porque o device pode autenticar via chave SSH
     senha_ssh_enc = Column(Text, nullable=True)
     auth_method = Column(Enum(AuthMethod), default=AuthMethod.password, nullable=False)

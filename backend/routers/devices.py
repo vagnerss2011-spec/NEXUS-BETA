@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from database import get_db
 from models import Device, Empresa, User, UserRole, Backup, TipoAtividade, AuthMethod, Protocolo
 from auth import require_role, get_current_user, is_master, ensure_empresa_access
@@ -137,7 +138,13 @@ async def criar_device(
         empresa_id=empresa_id,
     )
     db.add(device)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        # Mensagem amigável quando uma constraint do banco é violada (ex.:
+        # ftp_user UNIQUE, ou alguma column NOT NULL ainda não migrada).
+        raise HTTPException(status_code=400, detail=f"Conflito ao salvar dispositivo: {e.orig}")
     await db.refresh(device)
 
     # Para FTP push, geramos credencial após ter o ID. A senha em texto puro

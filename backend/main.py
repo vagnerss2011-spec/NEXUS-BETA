@@ -155,6 +155,18 @@ async def lifespan(app: FastAPI):
         """))
 
         # 8.1.x) devices: campos de FTP push (idempotente)
+        # usuario_ssh precisa virar nullable — devices via ftp_push não têm SSH user.
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='devices' AND column_name='usuario_ssh' AND is_nullable='NO'
+                ) THEN
+                    ALTER TABLE devices ALTER COLUMN usuario_ssh DROP NOT NULL;
+                END IF;
+            END$$;
+        """))
         await conn.execute(text("""
             ALTER TABLE devices
             ADD COLUMN IF NOT EXISTS ftp_user VARCHAR(64) UNIQUE
