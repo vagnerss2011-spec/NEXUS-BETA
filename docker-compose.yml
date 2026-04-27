@@ -25,12 +25,15 @@ services:
       - "8000"
     # Backup push: equipamentos enviam o backup pra cá.
     # - 21/tcp: FTP controle (passive na faixa 30000-30099 abaixo)
-    # - 2222/tcp: SFTP (porta 22 colide com SSH do host, por isso 2222)
+    # - 22/tcp + 2222/tcp: SFTP. SSH do host foi movido para 2288 para liberar a 22
+    #   (default da maioria das OLTs Huawei VRP, que não aceita porta custom). 2222
+    #   continua mapeada por compat com OLTs já configuradas apontando para ela.
     # - 69/udp: TFTP (resposta vem da mesma faixa 30000-30099 — UDP só pra
     #   sessões TFTP, mas funciona porque conntrack do iptables bate)
     # - 30000-30099/tcp+udp: faixa passiva (FTP) + portas efêmeras (TFTP)
     ports:
       - "21:21"
+      - "22:2222"
       - "2222:2222"
       - "69:69/udp"
       - "30000-30099:30000-30099"
