@@ -298,9 +298,18 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
     Implementação: paramiko 4.0 tornou as properties preferred_* read-only.
     A forma correta de configurar listas de algoritmos é via
     get_security_options() (digests = MACs, key_types = host key + pubkey).
+    Algoritmos desconhecidos pelo paramiko lançam ValueError, então
+    filtramos as listas pelo que ele realmente registra (_kex_info etc.) —
+    sobrevive upgrades futuros que removam algos legados completamente.
     """
-    opts = transport.get_security_options()
-    opts.kex = (
+    # Atributos com todas as algos conhecidas (mesmo as desabilitadas por default).
+    # Estáveis nas versões 2.x→4.x do paramiko.
+    known_kex = set(paramiko.Transport._kex_info.keys())
+    known_ciphers = set(paramiko.Transport._cipher_info.keys())
+    known_macs = set(paramiko.Transport._mac_info.keys())
+    known_keys = set(paramiko.Transport._key_info.keys())
+
+    desired_kex = (
         # Modernos (preferidos)
         "curve25519-sha256",
         "curve25519-sha256@libssh.org",
@@ -315,7 +324,7 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
         "diffie-hellman-group14-sha1",
         "diffie-hellman-group1-sha1",
     )
-    opts.ciphers = (
+    desired_ciphers = (
         # Modernos
         "aes128-ctr", "aes192-ctr", "aes256-ctr",
         "aes128-gcm@openssh.com", "aes256-gcm@openssh.com",
@@ -324,7 +333,7 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
         "3des-cbc",
     )
     # 'digests' no paramiko = MACs (HMACs aplicados após cifra)
-    opts.digests = (
+    desired_macs = (
         # Modernos
         "hmac-sha2-256-etm@openssh.com",
         "hmac-sha2-512-etm@openssh.com",
@@ -338,12 +347,18 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
     )
     # 'key_types' = algoritmos de assinatura aceitos para host key / client pubkey.
     # Inclui ssh-rsa (SHA-1) porque alguns VRP só assinam com isso.
-    opts.key_types = (
+    desired_keys = (
         "ssh-ed25519",
         "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
         "rsa-sha2-512", "rsa-sha2-256",
         "ssh-rsa",
     )
+
+    opts = transport.get_security_options()
+    opts.kex = tuple(k for k in desired_kex if k in known_kex)
+    opts.ciphers = tuple(c for c in desired_ciphers if c in known_ciphers)
+    opts.digests = tuple(m for m in desired_macs if m in known_macs)
+    opts.key_types = tuple(k for k in desired_keys if k in known_keys)
 
 
 def _handle_client(client_sock: socket.socket, client_addr: tuple, host_key: paramiko.PKey):
