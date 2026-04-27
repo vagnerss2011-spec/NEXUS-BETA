@@ -3,7 +3,13 @@ import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, F
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
-const FABRICANTES = ['mikrotik', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'outro']
+const FABRICANTES = ['mikrotik', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'vsolutions', 'outro']
+
+// Fabricantes que só fazem sentido com um tipo específico (lock).
+// Ex.: VSolutions só fabrica OLT GPON — sem roteador/switch/wireless.
+const FABRICANTE_TIPO_FIXO = {
+  vsolutions: 'olt',
+}
 const TIPOS = [
   { value: 'roteador', label: 'Roteador' },
   { value: 'olt', label: 'OLT' },
@@ -106,6 +112,19 @@ upload startupcfg ftp <SERVIDOR> <USUARIO> <SENHA> backup-fiberhome.cfg
 # Algumas builds usam:
 cd config
 backup ftp <SERVIDOR> <USUARIO> <SENHA>`,
+  },
+  vsolutions: {
+    titulo: 'VSolutions (V-SOL OLT)',
+    cmd: `# V-SOL / VSolutions OLT — sintaxe varia por modelo (V1600/V1610/V2724).
+# Modelo padrão (modo enable):
+enable
+upload running-config ftp <SERVIDOR> <USUARIO> <SENHA> backup-vsolutions.cfg
+
+# Em algumas firmwares mais novas:
+copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-vsolutions.cfg
+
+# Salvar antes de exportar é boa prática:
+write`,
   },
   outro: {
     titulo: 'Outro fabricante',
@@ -795,16 +814,38 @@ export default function Devices() {
                 </>
               )}
               <div>
-                <label className="block text-sm text-slate-400 mb-1.5">Tipo de equipamento</label>
-                <select value={form.tipo || 'roteador'} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500">
+                <label className="block text-sm text-slate-400 mb-1.5">
+                  Tipo de equipamento
+                  {FABRICANTE_TIPO_FIXO[form.fabricante] && (
+                    <span className="text-xs text-slate-500 ml-1">
+                      (fixo para {form.fabricante})
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={form.tipo || 'roteador'}
+                  onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}
+                  disabled={!!FABRICANTE_TIPO_FIXO[form.fabricante]}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
                   {TIPOS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Fabricante</label>
-                <select value={form.fabricante} onChange={e => setForm(f => ({ ...f, fabricante: e.target.value }))}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500">
+                <select
+                  value={form.fabricante}
+                  onChange={e => {
+                    const fab = e.target.value
+                    setForm(f => ({
+                      ...f,
+                      fabricante: fab,
+                      // Auto-ajusta o tipo quando o fabricante restringe
+                      tipo: FABRICANTE_TIPO_FIXO[fab] || f.tipo,
+                    }))
+                  }}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
+                >
                   {FABRICANTES.map(f => <option key={f} value={f} className="capitalize">{f}</option>)}
                 </select>
               </div>

@@ -34,8 +34,8 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text(f"ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS '{ev}'"))
             except Exception:
                 pass
-        # Novos fabricantes (ZTE, Nokia, Fiberhome)
-        for vendor in ("zte", "nokia", "fiberhome"):
+        # Novos fabricantes (ZTE, Nokia, Fiberhome, VSolutions)
+        for vendor in ("zte", "nokia", "fiberhome", "vsolutions"):
             try:
                 await conn.execute(text(f"ALTER TYPE devicevendor ADD VALUE IF NOT EXISTS '{vendor}'"))
             except Exception:

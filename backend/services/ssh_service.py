@@ -64,10 +64,11 @@ DEVICE_TYPES_SSH = {
     DeviceVendor.datacom:   "cisco_ios",
     DeviceVendor.cisco:     "cisco_ios",
     DeviceVendor.juniper:   "juniper_junos",
-    DeviceVendor.zte:       "zte_zxros",      # ZTE ZXR10/ZXA10 — CLI Cisco-like
-    DeviceVendor.nokia:     "nokia_sros",     # Nokia SR OS / 7750
-    DeviceVendor.fiberhome: "generic",        # AN5516 etc — varia por firmware, generic é o mais seguro
-    DeviceVendor.outro:     "generic",
+    DeviceVendor.zte:        "zte_zxros",      # ZTE ZXR10/ZXA10 — CLI Cisco-like
+    DeviceVendor.nokia:      "nokia_sros",     # Nokia SR OS / 7750
+    DeviceVendor.fiberhome:  "generic",        # AN5516 etc — varia por firmware, generic é o mais seguro
+    DeviceVendor.vsolutions: "generic",        # V-SOL OLT — CLI varia, generic é o seguro
+    DeviceVendor.outro:      "generic",
 }
 
 DEVICE_TYPES_TELNET = {
@@ -78,10 +79,11 @@ DEVICE_TYPES_TELNET = {
     DeviceVendor.datacom:   "cisco_ios_telnet",
     DeviceVendor.cisco:     "cisco_ios_telnet",
     DeviceVendor.juniper:   "juniper_junos_telnet",
-    DeviceVendor.zte:       "cisco_ios_telnet",
-    DeviceVendor.nokia:     "nokia_sros_telnet",
-    DeviceVendor.fiberhome: "generic_termserver",
-    DeviceVendor.outro:     "generic_termserver",
+    DeviceVendor.zte:        "cisco_ios_telnet",
+    DeviceVendor.nokia:      "nokia_sros_telnet",
+    DeviceVendor.fiberhome:  "generic_termserver",
+    DeviceVendor.vsolutions: "generic_termserver",
+    DeviceVendor.outro:      "generic_termserver",
 }
 
 COMMANDS = {
@@ -92,10 +94,11 @@ COMMANDS = {
     DeviceVendor.datacom:   "show running-config",
     DeviceVendor.cisco:     "show running-config",
     DeviceVendor.juniper:   "show configuration | display set",
-    DeviceVendor.zte:       "show running-config",
-    DeviceVendor.nokia:     "admin display-config",
-    DeviceVendor.fiberhome: "show running-config",
-    DeviceVendor.outro:     "show running-config",
+    DeviceVendor.zte:        "show running-config",
+    DeviceVendor.nokia:      "admin display-config",
+    DeviceVendor.fiberhome:  "show running-config",
+    DeviceVendor.vsolutions: "show running-config",
+    DeviceVendor.outro:      "show running-config",
 }
 
 def _clean_host(ip: str) -> str:

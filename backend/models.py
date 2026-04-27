@@ -21,6 +21,7 @@ class DeviceVendor(str, enum.Enum):
     zte = "zte"
     nokia = "nokia"
     fiberhome = "fiberhome"
+    vsolutions = "vsolutions"
     outro = "outro"
 
 class Protocolo(str, enum.Enum):
