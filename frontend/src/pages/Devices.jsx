@@ -164,6 +164,22 @@ function montarExemploFtp(fabricante, servidor, usuario, senha) {
     .replaceAll('<USUARIO>', usuario || '<USUARIO>')
     .replaceAll('<SENHA>', senha || '<SENHA>')
 }
+
+// Extrai mensagem útil do err do axios. Cobre 3 formatos:
+// - string (HTTPException simples)
+// - array de objetos (Pydantic validation: [{loc, msg, ...}])
+// - objeto (HTTPException com payload estruturado)
+function extrairErro(err, fallback) {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail.map(e => e?.msg || JSON.stringify(e)).join('; ')
+  }
+  if (detail && typeof detail === 'object') {
+    return detail.message || detail.detail || JSON.stringify(detail)
+  }
+  return fallback
+}
 const formatHostPort = (ip, porta) => {
   if (!ip) return ''
   return ip.includes(':') ? `[${ip}]:${porta}` : `${ip}:${porta}`
@@ -278,7 +294,9 @@ export default function Devices() {
         if (form.senha_ssh) payload.senha_ssh = form.senha_ssh
       }
       let resp
-      if (modal === 'new') resp = await api.post('/devices/', payload)
+      // 'new' (SSH/Telnet) e 'new-ftp' são ambos criação. 'modal' numérico é edição.
+      const ehCriacao = modal === 'new' || modal === 'new-ftp'
+      if (ehCriacao) resp = await api.post('/devices/', payload)
       else resp = await api.put(`/devices/${modal}`, payload)
       fecharModal()
       // Criação de FTP push retorna ftp_senha em texto puro UMA vez
@@ -293,8 +311,7 @@ export default function Devices() {
       }
       load()
     } catch (err) {
-      const detail = err?.response?.data?.detail || 'Erro ao salvar dispositivo'
-      alert(detail)
+      alert(extrairErro(err, 'Erro ao salvar dispositivo'))
     } finally { setLoading(false) }
   }
 
@@ -310,7 +327,7 @@ export default function Devices() {
         ftp_origem_cidr: data.ftp_origem_cidr,
       })
     } catch (err) {
-      alert(err?.response?.data?.detail || 'Falha ao regenerar credencial')
+      alert(extrairErro(err, 'Falha ao regenerar credencial'))
     }
   }
 
