@@ -309,6 +309,12 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
     known_macs = set(paramiko.Transport._mac_info.keys())
     known_keys = set(paramiko.Transport._key_info.keys())
 
+    # NOTA: 'diffie-hellman-group-exchange-sha1' e 'diffie-hellman-group-exchange-sha256'
+    # estão registrados em paramiko._kex_info mas a implementação server-side em paramiko
+    # 4.0 está quebrada (validado em 2026-04-27 com smoke test: client OpenSSH negociava
+    # GEX-sha1 e a sessão fechava na troca DH_GEX_GROUP). Não inclua eles aqui — paramiko
+    # escolheria por ordem e falharia. Felizmente VRP da Huawei também aceita group14-sha1
+    # como fallback, que é a próxima preferência de equipamento legado.
     desired_kex = (
         # Modernos (preferidos)
         "curve25519-sha256",
@@ -318,9 +324,7 @@ def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
         "ecdh-sha2-nistp521",
         "diffie-hellman-group16-sha512",
         "diffie-hellman-group14-sha256",
-        # Legacy para Huawei VRP / equipamento antigo
-        "diffie-hellman-group-exchange-sha256",
-        "diffie-hellman-group-exchange-sha1",
+        # Legacy fixed-group DH para Huawei VRP / equipamento antigo
         "diffie-hellman-group14-sha1",
         "diffie-hellman-group1-sha1",
     )
