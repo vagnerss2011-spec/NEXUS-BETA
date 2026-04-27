@@ -68,7 +68,21 @@ server {
         proxy_read_timeout 120s;
     }
 
+    # Assets buildados pelo Vite têm hash no nome (index-XXXX.js, etc.)
+    # Imutáveis — agressivamente cacheados (1 ano).
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+        try_files $uri =404;
+    }
+
+    # SPA entry point: nome fixo, conteúdo muda a cada deploy.
+    # Sem cache pra garantir que o navegador sempre puxe a versão nova
+    # (que aponta pros assets com hash mais recente).
     location / {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
         try_files $uri $uri/ /index.html;
     }
 }
