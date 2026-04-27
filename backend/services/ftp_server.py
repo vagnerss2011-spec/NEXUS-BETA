@@ -15,6 +15,7 @@ Camadas de defesa:
 import os
 import threading
 import logging
+import logging.handlers
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_network
 from sqlalchemy import create_engine, select, delete, func
@@ -27,6 +28,30 @@ from models import Device, Backup, Atividade, TipoAtividade, Protocolo
 from services.crypto import decrypt
 
 log = logging.getLogger("nexus.ftp")
+
+# Logger dedicado pra falhas de autenticação. Escreve em arquivo dentro de
+# /var/log/nexus (volume montado do host) num formato simples que o fail2ban
+# consegue parsear via regex. Cada linha: "<timestamp> [LEVEL] AUTH_FAIL ip=X user=Y reason=...".
+auth_log = logging.getLogger("nexus.ftp.auth")
+auth_log.setLevel(logging.WARNING)
+auth_log.propagate = False  # não duplica nos logs do uvicorn
+
+_LOG_DIR = "/var/log/nexus"
+_LOG_FILE = os.path.join(_LOG_DIR, "ftp-auth.log")
+try:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _handler = logging.handlers.RotatingFileHandler(
+        _LOG_FILE, maxBytes=10_000_000, backupCount=3, encoding="utf-8"
+    )
+    _handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    auth_log.addHandler(_handler)
+except Exception as e:
+    # Sem volume mount disponível: cai pra stderr (não quebra o servidor)
+    log.warning("Não foi possível abrir %s: %s — auth log vai pra stderr", _LOG_FILE, e)
+    auth_log.addHandler(logging.StreamHandler())
 
 # Engine síncrono dedicado. A DATABASE_URL é configurada com +asyncpg para
 # o resto do app; aqui trocamos pelo driver síncrono (psycopg2-binary já
@@ -70,18 +95,22 @@ class DBAuthorizer(DummyAuthorizer):
                 select(Device).where(Device.ftp_user == username)
             ).scalar_one_or_none()
             if not dev or not dev.ativo or dev.protocolo != Protocolo.ftp_push or not dev.ftp_senha_enc:
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", ip, username)
                 _audit(db, TipoAtividade.ftp_acesso_negado, ip, alvo_nome=username,
                        detalhe="usuário FTP inexistente ou device desabilitado")
                 raise AuthenticationFailed("Authentication failed.")
             try:
                 senha_real = decrypt(dev.ftp_senha_enc)
             except Exception:
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=decrypt_error", ip, username)
                 raise AuthenticationFailed("Authentication failed.")
             if password != senha_real:
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
                 _audit(db, TipoAtividade.ftp_acesso_negado, ip, alvo_nome=username,
                        empresa_id=dev.empresa_id, detalhe="senha incorreta")
                 raise AuthenticationFailed("Authentication failed.")
             if not _ip_match(ip, dev.ftp_origem_cidr):
+                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
                 _audit(db, TipoAtividade.ftp_acesso_negado, ip, alvo_nome=username,
                        empresa_id=dev.empresa_id,
                        detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}")
