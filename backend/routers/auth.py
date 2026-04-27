@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
 from database import get_db
 from models import User, TipoAtividade
 from auth import hash_senha, verificar_senha, criar_token, get_current_user
@@ -9,6 +10,13 @@ from schemas import Token, UserOut
 from services import audit
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# Lockout: trava conta por LOCKOUT_MINUTES após MAX_FAILED_ATTEMPTS senhas erradas.
+# Valores conservadores — atrapalha bruteforce mas não usuário legítimo que digitou
+# errado algumas vezes em sequência. Janela curta porque rate limit do nginx já
+# está cuidando do volume.
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
 
 @router.post("/login", response_model=Token)
 async def login(
@@ -18,10 +26,39 @@ async def login(
 ):
     result = await db.execute(select(User).where(User.email == form.username))
     user = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+
+    # Conta bloqueada? Responde 423 Locked com tempo restante (em minutos arredondado p/ cima).
+    if user and user.bloqueado_ate and user.bloqueado_ate > now:
+        restante_seg = (user.bloqueado_ate - now).total_seconds()
+        restante_min = max(1, int(restante_seg // 60) + (1 if restante_seg % 60 else 0))
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=f"Conta bloqueada por excesso de tentativas. Tente novamente em ~{restante_min} min.",
+        )
+
     if not user or not verificar_senha(form.password, user.senha_hash):
+        # Senha errada: incrementa contador e trava se atingiu o limite.
+        # Importante: só faz isso se o user existe — caso contrário, só erro genérico
+        # (não criamos linha de "tentativa contra usuário inexistente" pra não
+        # dar pista ao atacante de quais emails são válidos).
+        if user:
+            user.tentativas_falhas = (user.tentativas_falhas or 0) + 1
+            if user.tentativas_falhas >= MAX_FAILED_ATTEMPTS:
+                user.bloqueado_ate = now + timedelta(minutes=LOCKOUT_MINUTES)
+                user.tentativas_falhas = 0  # zera contador junto com o lock
+            await db.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
+
     if not user.ativo:
         raise HTTPException(status_code=403, detail="Usuário inativo")
+
+    # Sucesso: zera contador e qualquer lock pendente
+    if user.tentativas_falhas or user.bloqueado_ate:
+        user.tentativas_falhas = 0
+        user.bloqueado_ate = None
+        await db.commit()
+
     token = criar_token({"sub": str(user.id)})
     await audit.registrar(db, tipo=TipoAtividade.login, user=user, request=request)
     return {"access_token": token, "token_type": "bearer"}

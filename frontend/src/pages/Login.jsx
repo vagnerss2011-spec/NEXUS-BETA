@@ -39,8 +39,18 @@ export default function Login() {
         }
         navigate('/dashboard')
       }
-    } catch {
-      setErro('E-mail ou senha inválidos')
+    } catch (err) {
+      const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+      if (status === 429) {
+        setErro('Muitas tentativas em pouco tempo. Aguarde 1 minuto e tente de novo.')
+      } else if (status === 423) {
+        setErro(detail || 'Conta bloqueada temporariamente por excesso de tentativas.')
+      } else if (status === 403) {
+        setErro(detail || 'Usuário inativo')
+      } else {
+        setErro('E-mail ou senha inválidos')
+      }
     } finally {
       setLoading(false)
     }

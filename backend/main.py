@@ -56,6 +56,16 @@ async def lifespan(app: FastAPI):
             REFERENCES empresas(id) ON DELETE SET NULL
         """))
 
+        # 3.1) users: anti-bruteforce (lockout de conta após N senhas erradas)
+        await conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS tentativas_falhas INTEGER NOT NULL DEFAULT 0
+        """))
+        await conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP WITH TIME ZONE
+        """))
+
         # 4) devices.empresa_id — adicionado nullable; depois migra órfãos e vira NOT NULL
         await conn.execute(text("""
             ALTER TABLE devices

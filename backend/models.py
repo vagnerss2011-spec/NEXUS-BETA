@@ -63,6 +63,9 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.viewer)
     ativo = Column(Boolean, default=True)
     empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="SET NULL"), nullable=True)
+    # Anti-bruteforce: zera no login bem-sucedido; se atinge limite, define bloqueado_ate.
+    tentativas_falhas = Column(Integer, nullable=False, default=0)
+    bloqueado_ate = Column(DateTime(timezone=True), nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     empresa = relationship("Empresa", back_populates="usuarios")
 

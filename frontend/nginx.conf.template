@@ -1,3 +1,9 @@
+# Rate limit anti-bruteforce no /api/auth/login.
+# 10r/m por IP, com burst de 5 reqs (acomoda usuário que digitou errado em sequência).
+# Atacante automatizado é cortado já no nginx, antes de tocar o backend/DB.
+limit_req_zone $binary_remote_addr zone=login_zone:10m rate=10r/m;
+limit_req_status 429;
+
 # HTTP: serve o desafio ACME do certbot e redireciona todo o resto para HTTPS.
 server {
     listen 80;
@@ -40,6 +46,18 @@ server {
     location ~ /\.(git|svn|env|htaccess|htpasswd) { return 444; }
     location ~* \.(php|aspx?|jsp|cgi)$            { return 444; }
     location ~ ^/(cgi-bin|vendor|phpunit|wp-admin|wp-content|wp-login|wp-includes|administrator|hello\.world|server-(status|info))(/|$) { return 444; }
+
+    # Rate limit específico no endpoint de login. nodelay = burst é instantâneo,
+    # depois enforce a taxa estrita. Localização exata casa antes do prefixo /api/.
+    location = /api/auth/login {
+        limit_req zone=login_zone burst=5 nodelay;
+        proxy_pass http://backend:8000/api/auth/login;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
 
     location /api/ {
         proxy_pass http://backend:8000/api/;
