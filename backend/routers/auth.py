@@ -5,8 +5,8 @@ from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 from database import get_db
 from models import User, TipoAtividade
-from auth import hash_senha, verificar_senha, criar_token, get_current_user
-from schemas import Token, UserOut
+from auth import hash_senha, verificar_senha, criar_token, get_current_user, get_current_user_basic
+from schemas import Token, UserOut, ChangePasswordIn
 from services import audit
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -67,11 +67,35 @@ async def login(
 async def logout(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_basic),
 ):
     await audit.registrar(db, tipo=TipoAtividade.logout, user=current_user, request=request)
     return {"ok": True}
 
 @router.get("/me", response_model=UserOut)
-async def me(current_user: User = Depends(get_current_user)):
+async def me(current_user: User = Depends(get_current_user_basic)):
+    """Permite obter os dados do próprio usuário mesmo com senha temporária —
+    o frontend usa esse endpoint pra detectar a flag e redirecionar."""
     return current_user
+
+
+@router.post("/change-password", response_model=UserOut)
+async def change_password(
+    data: ChangePasswordIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user_basic),
+):
+    """Troca a senha do usuário logado. Funciona mesmo com senha_temporaria=True
+    (caso de primeiro login)."""
+    if not verificar_senha(data.senha_atual, user.senha_hash):
+        raise HTTPException(status_code=400, detail="Senha atual incorreta")
+    if verificar_senha(data.senha_nova, user.senha_hash):
+        raise HTTPException(status_code=400, detail="A nova senha precisa ser diferente da atual")
+    user.senha_hash = hash_senha(data.senha_nova)
+    user.senha_temporaria = False
+    # Reset de qualquer lock pendente — após trocar senha, a sessão limpa.
+    user.tentativas_falhas = 0
+    user.bloqueado_ate = None
+    await db.commit()
+    await db.refresh(user)
+    return user

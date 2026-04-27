@@ -25,7 +25,10 @@ def criar_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     payload.update({"exp": expire})
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
+async def get_current_user_basic(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> User:
+    """Resolve o user pelo token sem aplicar o gate de senha temporária.
+    Usado APENAS pelos endpoints que precisam funcionar mesmo com a flag
+    ligada: /auth/me, /auth/logout, /auth/change-password."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token inválido ou expirado",
@@ -43,6 +46,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     user = result.scalar_one_or_none()
     if not user or not user.ativo:
         raise credentials_exception
+    return user
+
+
+async def get_current_user(user: User = Depends(get_current_user_basic)) -> User:
+    """Resolve o user E exige que ele já tenha trocado a senha temporária.
+    Bloqueia QUALQUER endpoint protegido (exceto os que usam get_current_user_basic)
+    enquanto senha_temporaria=True. Frontend lê o detail/code para redirecionar."""
+    if user.senha_temporaria:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "PASSWORD_CHANGE_REQUIRED",
+                "message": "Troca de senha obrigatória antes de continuar",
+            },
+        )
     return user
 
 def require_role(*roles: UserRole):

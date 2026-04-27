@@ -45,6 +45,14 @@ api.interceptors.response.use(
       localStorage.removeItem('token')
       window.location.href = '/login'
     }
+    // Backend exige troca de senha antes de qualquer outro acesso.
+    // Detail vem como objeto { code: 'PASSWORD_CHANGE_REQUIRED', message }
+    const detail = err.response?.data?.detail
+    if (err.response?.status === 403 && typeof detail === 'object' && detail?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (window.location.pathname !== '/trocar-senha') {
+        window.location.href = '/trocar-senha'
+      }
+    }
     return Promise.reject(err)
   }
 )

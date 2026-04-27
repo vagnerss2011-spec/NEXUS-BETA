@@ -77,9 +77,22 @@ class UserOut(BaseModel):
     role: UserRole
     ativo: bool
     empresa_id: Optional[int] = None
+    senha_temporaria: bool = False
     criado_em: datetime
     class Config:
         from_attributes = True
+
+
+class ChangePasswordIn(BaseModel):
+    senha_atual: str
+    senha_nova: str
+
+    @field_validator("senha_nova")
+    @classmethod
+    def _valida_nova(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Nova senha precisa ter pelo menos 8 caracteres")
+        return v
 
 # Device
 class DeviceCreate(BaseModel):

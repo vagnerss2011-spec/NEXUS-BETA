@@ -105,6 +105,13 @@ async def lifespan(app: FastAPI):
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP WITH TIME ZONE
         """))
+        # 3.2) users.senha_temporaria — usuários existentes mantêm acesso
+        # (DEFAULT FALSE no ADD COLUMN), só novos cadastros são marcados
+        # como senha temporária pelo router.
+        await conn.execute(text("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS senha_temporaria BOOLEAN NOT NULL DEFAULT FALSE
+        """))
 
         # 4) devices.empresa_id — adicionado nullable; depois migra órfãos e vira NOT NULL
         await conn.execute(text("""

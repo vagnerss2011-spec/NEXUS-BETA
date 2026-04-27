@@ -68,6 +68,7 @@ async def criar_usuario(
         senha_hash=hash_senha(data.senha),
         role=data.role,
         empresa_id=empresa_id,
+        senha_temporaria=True,  # força troca no primeiro login
     )
     db.add(novo)
     await db.commit()
@@ -113,6 +114,11 @@ async def atualizar_usuario(
 
     if "senha" in update:
         alvo.senha_hash = hash_senha(update.pop("senha"))
+        # Admin resetou a senha de outro user → marca como temporária pra forçar
+        # nova troca. Quando o próprio user muda a própria senha, ele usa o
+        # endpoint /auth/change-password (que limpa a flag corretamente).
+        if alvo.id != user.id:
+            alvo.senha_temporaria = True
     for field, value in update.items():
         setattr(alvo, field, value)
     await db.commit()

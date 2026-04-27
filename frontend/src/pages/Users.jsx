@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, KeyRound, AlertTriangle } from 'lucide-react'
 import api, { getCurrentEmpresa } from '../services/api'
 
 const roleBadge = {
@@ -132,7 +132,17 @@ export default function Users() {
                     <span className="font-medium text-white">{u.nome}</span>
                   </div>
                 </td>
-                <td className="px-5 py-3.5 text-slate-300">{u.email}</td>
+                <td className="px-5 py-3.5 text-slate-300">
+                  <span className="flex items-center gap-2">
+                    {u.email}
+                    {u.senha_temporaria && (
+                      <span title="Aguardando troca de senha no primeiro login"
+                        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        <KeyRound size={10} /> senha temp.
+                      </span>
+                    )}
+                  </span>
+                </td>
                 <td className="px-5 py-3.5">
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${roleBadge[u.role] || roleBadge.viewer}`}>
                     {roleLabel[u.role] || u.role}
@@ -178,6 +188,12 @@ export default function Users() {
               <button onClick={() => setModal(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
             <div className="p-5 space-y-4">
+              {modal === 'new' && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 flex items-start gap-2">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                  <span>A senha digitada aqui será <strong>temporária</strong>. No primeiro login o usuário será obrigado a definir uma nova.</span>
+                </div>
+              )}
               {[
                 { label: 'Nome', key: 'nome', placeholder: 'João Silva' },
                 { label: 'E-mail', key: 'email', placeholder: 'joao@empresa.com', type: 'email' },

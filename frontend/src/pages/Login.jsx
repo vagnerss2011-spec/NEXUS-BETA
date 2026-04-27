@@ -23,6 +23,12 @@ export default function Login() {
       const me = await api.get('/auth/me')
       localStorage.setItem('user', JSON.stringify(me.data))
 
+      // Senha temporária: força troca antes de tudo
+      if (me.data.senha_temporaria) {
+        navigate('/trocar-senha')
+        return
+      }
+
       if (me.data.role === 'admin') {
         // admin master escolhe a empresa; limpa contexto anterior
         setCurrentEmpresa(null)

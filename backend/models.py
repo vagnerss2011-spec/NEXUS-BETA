@@ -76,6 +76,9 @@ class User(Base):
     # Anti-bruteforce: zera no login bem-sucedido; se atinge limite, define bloqueado_ate.
     tentativas_falhas = Column(Integer, nullable=False, default=0)
     bloqueado_ate = Column(DateTime(timezone=True), nullable=True)
+    # Forçar troca de senha no primeiro login. Default True para usuários
+    # criados a partir de agora; usuários existentes ficam False na migração.
+    senha_temporaria = Column(Boolean, nullable=False, default=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     empresa = relationship("Empresa", back_populates="usuarios")
 
