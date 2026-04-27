@@ -34,11 +34,15 @@ const STATUS_FILTROS = [
   { value: 'falha', label: 'Backup com falha' },
   { value: 'desconhecido', label: 'Status desconhecido' },
 ]
-const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 2222, tftp_push: 69 }
+// SFTP usa porta 22 (default do protocolo) desde 2026-04-27 — SSH do host migrou
+// pra 2288 pra liberar a 22 ao container, porque OLTs Huawei VRP não aceitam
+// porta SFTP custom no comando 'backup configuration sftp'. Porta 2222 segue
+// mapeada por compat com equipamentos já configurados nela.
+const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_push: 69 }
 const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
 const PUSH_PROTOCOLS = ['sftp_push', 'ftp_push', 'tftp_push']  // ordem do select (SFTP recomendado)
 const PUSH_PROTO_INFO = {
-  sftp_push: { label: 'SFTP', desc: 'criptografado (recomendado)', porta: 2222, cor: 'text-emerald-300' },
+  sftp_push: { label: 'SFTP', desc: 'criptografado (recomendado)', porta: 22, cor: 'text-emerald-300' },
   ftp_push:  { label: 'FTP',  desc: 'plano, com user e senha',     porta: 21,   cor: 'text-violet-300' },
   tftp_push: { label: 'TFTP', desc: 'sem auth, identifica por IP', porta: 69,   cor: 'text-orange-300' },
 }
@@ -168,32 +172,42 @@ write`,
 const SFTP_EXAMPLES = {
   mikrotik:   '# Mikrotik não tem SFTP nativo no /tool fetch. Use FTP ou TFTP.',
   mikrotik_v7:'# Mikrotik não tem SFTP nativo no /tool fetch. Use FTP ou TFTP.',
-  huawei:    `# Huawei VRP suporta SFTP nativamente.
-save
-backup configuration to sftp <SERVIDOR>:2222 <USUARIO> <SENHA> backup-huawei.cfg`,
-  cisco:     `# Cisco IOS-XE suporta SCP/SFTP. Use porta 2222.
+  huawei:    `# Huawei VRP (MA5800/MA5680T) — credenciais SFTP são setadas
+# SEPARADAMENTE em modo privilege ANTES do backup.
+# Validado em 2026-04-27 com OLT MA5800 firmware Gaia_X2.
+
+# 1) Saia do modo config (se estiver) e em modo privilege configure as creds:
+quit
+ssh sftp set <USUARIO> <SENHA>
+display ssh sftp                         # confirma que salvou
+
+# 2) Volte ao modo config e dispare o backup (porta 22 default — VRP não
+#    aceita porta custom nesse comando, por isso liberamos a 22 aqui):
+config
+backup configuration sftp <SERVIDOR> backup-huawei.cfg`,
+  cisco:     `# Cisco IOS-XE suporta SCP/SFTP via porta 22 default.
 configure terminal
  ip ssh client algorithm encryption aes128-ctr aes192-ctr aes256-ctr
 end
-copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-cisco.cfg`,
+copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-cisco.cfg`,
   juniper:   `set system archival configuration archive-sites \\
-    "scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222" transfer-on-commit
+    "scp://<USUARIO>:<SENHA>@<SERVIDOR>" transfer-on-commit
 commit`,
   datacom:   `# Datacom DmOS — SFTP em firmwares recentes:
-copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-datacom.cfg`,
+copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-datacom.cfg`,
   intelbras: `# Cisco-like: copy via scp:// na maioria das builds.
-copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-intelbras.cfg`,
+copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-intelbras.cfg`,
   zte:       `# ZTE ZXR10 (firmware recente):
-copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-zte.cfg`,
-  nokia:     `admin save sftp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/backup-nokia.cfg`,
+copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-zte.cfg`,
+  nokia:     `admin save sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-nokia.cfg`,
   ubiquiti:  `# Ubiquiti EdgeOS:
 configure
 set system config-management commit-archive location \\
-    "scp://<USUARIO>:<SENHA>@<SERVIDOR>:2222/"
+    "scp://<USUARIO>:<SENHA>@<SERVIDOR>/"
 commit ; save ; exit`,
   fiberhome: '# Fiberhome OLT (AN5516/AN6000) raramente suporta SFTP. Use FTP ou TFTP.',
   vsolutions:'# V-SOL OLT raramente suporta SFTP. Use FTP ou TFTP.',
-  outro:     '# Comando genérico — adapte ao manual:\nsftp:// <USUARIO>:<SENHA>@<SERVIDOR>:2222/<arquivo>.cfg',
+  outro:     '# Comando genérico — adapte ao manual:\nsftp://<USUARIO>:<SENHA>@<SERVIDOR>/<arquivo>.cfg',
 }
 
 const TFTP_EXAMPLES = {
