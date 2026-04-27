@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, X, Terminal, ChevronRight, Trash2 } from 'lucide-react'
-import api from '../services/api'
+import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, X, Terminal, ChevronRight, Trash2, Building2 } from 'lucide-react'
+import api, { getCurrentEmpresa } from '../services/api'
 
 function duration(inicio, fim) {
   if (!fim) return '—'
@@ -30,7 +30,11 @@ export default function Logs() {
   const [backupsLog, setBackupsLog] = useState([])
   const [loadingDetalhe, setLoadingDetalhe] = useState(false)
   const me = JSON.parse(localStorage.getItem('user') || '{}')
+  const empresaSelecionada = getCurrentEmpresa()
   const canDelete = ['admin', 'admin_empresa'].includes(me.role)
+  // Coluna "Empresas" só aparece para admin master visualizando todas as empresas
+  // (sem nenhuma selecionada). Para o admin de uma única empresa a info é redundante.
+  const mostrarEmpresas = me.role === 'admin' && !empresaSelecionada
 
   async function load() {
     setLoading(true)
@@ -115,13 +119,14 @@ export default function Logs() {
               <th className="px-5 py-3 font-medium">Total</th>
               <th className="px-5 py-3 font-medium text-emerald-400">Sucesso</th>
               <th className="px-5 py-3 font-medium text-red-400">Falha</th>
+              {mostrarEmpresas && <th className="px-5 py-3 font-medium">Empresas</th>}
               <th className="px-5 py-3 font-medium text-right">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700">
             {logs.length === 0 && !loading && (
               <tr>
-                <td colSpan={7} className="text-center text-slate-400 py-10">
+                <td colSpan={mostrarEmpresas ? 8 : 7} className="text-center text-slate-400 py-10">
                   Nenhuma execução registrada ainda
                 </td>
               </tr>
@@ -142,6 +147,31 @@ export default function Logs() {
                 <td className="px-5 py-3.5 text-slate-300">{log.total ?? '—'}</td>
                 <td className="px-5 py-3.5 text-emerald-400 font-medium">{log.sucessos ?? '—'}</td>
                 <td className="px-5 py-3.5 text-red-400 font-medium">{log.falhas ?? '—'}</td>
+                {mostrarEmpresas && (
+                  <td className="px-5 py-3.5">
+                    {log.empresas?.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 max-w-[280px]">
+                        {log.empresas.map(e => (
+                          <span
+                            key={e.empresa_id}
+                            title={`${e.sucessos} ok · ${e.falhas} falha${e.falhas === 1 ? '' : 's'}`}
+                            className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded font-medium ${
+                              e.falhas > 0
+                                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                            }`}
+                          >
+                            <Building2 size={11} />
+                            <span className="max-w-[140px] truncate">{e.nome}</span>
+                            <span className="text-slate-400">{e.sucessos}/{e.sucessos + e.falhas}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-500 italic">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="px-5 py-3.5">
                   <div className="flex items-center gap-1 justify-end">
                     {canDelete && (
