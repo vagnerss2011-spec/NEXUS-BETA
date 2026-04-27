@@ -14,8 +14,18 @@ Camadas de defesa idênticas ao FTP:
 
 Diferenças do FTP:
 - Transporte criptografado por SSH (chave de host Ed25519/RSA persistida)
-- Porta 2222 externa (22 colide com SSH do host)
+- Portas externas 22 e 2222 (mapeadas no docker-compose para 2222 do container).
+  SSH do host migrou para 2288 em 2026-04-27 para liberar a 22 default —
+  necessário porque OLTs Huawei VRP geralmente não aceitam porta SFTP custom
+  no comando `backup configuration sftp`.
 - Cada conexão roda em thread separada
+
+Compatibilidade com equipamento legado:
+- Huawei VRP (MA5800, MA5680T, MA5683T) usa KEX/HMAC/cipher antigos que
+  paramiko 4.0 desabilitou por default. As listas preferred_* na função
+  _handle_client reativam esses algoritmos. Sem isso, KEX falha com
+  "Expecting packet from (30,), got 34" — assinatura de cliente VRP
+  forçando diffie-hellman-group-exchange-sha1.
 """
 import os
 import socket
@@ -273,11 +283,67 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
     def symlink(self, target_path, path): return paramiko.SFTP_PERMISSION_DENIED
 
 
+def _aplicar_compat_legacy(transport: paramiko.Transport) -> None:
+    """Reativa KEX/ciphers/MACs legados que paramiko 4.0 desabilitou por default.
+
+    Necessário para que OLTs Huawei VRP (MA5800/MA5680T) consigam negociar.
+    Mantém os algoritmos modernos no topo da lista — paramiko escolhe o
+    primeiro que ambos os lados suportam, então não há perda de segurança
+    em conexões com clientes modernos.
+
+    Validado em 2026-04-27 com Huawei OLT MA5800 (firmware Gaia_X2) — sem
+    este patch, paramiko 4.0 quebra o handshake com erro:
+    'Expecting packet from (30,), got 34' (cliente VRP força DH-GEX-sha1).
+    """
+    transport.preferred_kex = (
+        # Modernos (preferidos)
+        "curve25519-sha256",
+        "curve25519-sha256@libssh.org",
+        "ecdh-sha2-nistp256",
+        "ecdh-sha2-nistp384",
+        "ecdh-sha2-nistp521",
+        "diffie-hellman-group16-sha512",
+        "diffie-hellman-group14-sha256",
+        # Legacy para Huawei VRP / equipamento antigo
+        "diffie-hellman-group-exchange-sha256",
+        "diffie-hellman-group-exchange-sha1",
+        "diffie-hellman-group14-sha1",
+        "diffie-hellman-group1-sha1",
+    )
+    transport.preferred_ciphers = (
+        # Modernos
+        "aes128-ctr", "aes192-ctr", "aes256-ctr",
+        "aes128-gcm@openssh.com", "aes256-gcm@openssh.com",
+        # Legacy CBC para Huawei VRP
+        "aes128-cbc", "aes192-cbc", "aes256-cbc",
+        "3des-cbc",
+    )
+    transport.preferred_macs = (
+        # Modernos
+        "hmac-sha2-256-etm@openssh.com",
+        "hmac-sha2-512-etm@openssh.com",
+        "hmac-sha2-256",
+        "hmac-sha2-512",
+        # Legacy
+        "hmac-sha1",
+        "hmac-sha1-96",
+        "hmac-md5",
+        "hmac-md5-96",
+    )
+    transport.preferred_pubkeys = (
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+        "rsa-sha2-512", "rsa-sha2-256",
+        "ssh-rsa",  # SHA-1 — alguns VRP só assinam com isso
+    )
+
+
 def _handle_client(client_sock: socket.socket, client_addr: tuple, host_key: paramiko.PKey):
     client_ip = client_addr[0]
     transport = None
     try:
         transport = paramiko.Transport(client_sock)
+        _aplicar_compat_legacy(transport)
         transport.add_server_key(host_key)
         transport.set_subsystem_handler("sftp", paramiko.SFTPServer, NexusSFTPServerInterface)
         ssh_iface = NexusSSHServerInterface(client_ip=client_ip)
