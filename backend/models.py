@@ -106,7 +106,7 @@ class Backup(Base):
     __tablename__ = "backups"
     id = Column(Integer, primary_key=True)
     device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
-    log_scheduler_id = Column(Integer, ForeignKey("log_scheduler.id"), nullable=True)
+    log_scheduler_id = Column(Integer, ForeignKey("log_scheduler.id", ondelete="SET NULL"), nullable=True)
     status = Column(String(10), nullable=False)  # sucesso | falha
     conteudo = Column(Text, nullable=True)
     erro = Column(Text, nullable=True)

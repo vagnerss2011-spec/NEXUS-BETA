@@ -59,6 +59,29 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS log_scheduler_id INTEGER
             REFERENCES log_scheduler(id) ON DELETE SET NULL
         """))
+        # 1.1) Garante que a constraint tenha ON DELETE SET NULL.
+        # Em ambientes antigos a tabela foi criada via create_all SEM ondelete
+        # no model, e o ADD COLUMN IF NOT EXISTS acima virou no-op porque a
+        # coluna já existia. Sem ON DELETE SET NULL, deletar uma linha de
+        # log_scheduler quebra com FK violation. Esta migração detecta o
+        # estado atual e recria a constraint só se necessário.
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'backups_log_scheduler_id_fkey'
+                      AND confdeltype <> 'n'  -- 'n' = SET NULL; outros valores indicam comportamento errado
+                ) THEN
+                    ALTER TABLE backups DROP CONSTRAINT backups_log_scheduler_id_fkey;
+                    ALTER TABLE backups
+                        ADD CONSTRAINT backups_log_scheduler_id_fkey
+                        FOREIGN KEY (log_scheduler_id) REFERENCES log_scheduler(id)
+                        ON DELETE SET NULL;
+                END IF;
+            END$$;
+        """))
 
         # 3) users.empresa_id
         await conn.execute(text("""
