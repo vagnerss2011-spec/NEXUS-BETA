@@ -306,9 +306,25 @@ const NTP_EXAMPLES = {
   mikrotik_v7:`# RouterOS v7: a sintaxe mudou — usa 'servers' (plural) em vez de 'primary-ntp'
 /system ntp client set enabled=yes servers=<SERVIDOR>
 /system clock set time-zone-name=America/Sao_Paulo`,
-  huawei:    `# Huawei VRP (MA5800/MA5680T) — em modo config:
-ntp-service unicast-server <SERVIDOR>
-ntp-service authentication enable false
+  huawei:    `# Huawei VRP (MA5800/MA5680T) — NTP client recomendado.
+# Validado em 2026-04-27 com OLT MA5800 firmware Gaia_X2.
+# Em modo config:
+
+# Desabilita o NTP server (a OLT é só cliente, não serve hora pra ninguém)
+ntp-service server disable
+ntp-service ipv6 server disable
+
+# Permite receber respostas em qualquer interface IPv4; bloqueia IPv6
+ntp-service server source-interface all enable
+ntp-service ipv6 server source-interface all disable
+
+# NEXUS BETA como server primário (preferred)
+ntp-service unicast-server <SERVIDOR> preference
+
+# Fallback público — a.ntp.br (NIC.br stratum-1, IP fixo: 200.160.0.8)
+ntp-service unicast-server 200.160.0.8
+
+# Timezone Brasília
 clock timezone BRT minus 03:00:00`,
   cisco:     `configure terminal
  ntp server <SERVIDOR>
