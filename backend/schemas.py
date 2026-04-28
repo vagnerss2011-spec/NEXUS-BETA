@@ -31,6 +31,9 @@ class EmpresaUpdate(BaseModel):
     nome: Optional[str] = None
     cnpj: Optional[str] = None
     ativo: Optional[bool] = None
+    # NULL/string-vazia limpa (volta ao default global); valor numérico
+    # (-1001234567890 ou similar) define o chat-grupo desta empresa.
+    telegram_chat_id: Optional[str] = None
 
 class EmpresaOut(BaseModel):
     id: int
@@ -38,6 +41,7 @@ class EmpresaOut(BaseModel):
     cnpj: Optional[str] = None
     ativo: bool
     criado_em: datetime
+    telegram_chat_id: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -196,6 +200,35 @@ class ScheduleUpdate(BaseModel):
     backup_hour: int
     backup_minute: int
     log_retention_days: Optional[int] = None  # 0 = desativa a purga
+
+# Telegram (alertas de falha/corrupção)
+class TelegramConfigOut(BaseModel):
+    """Estado atual do Telegram para o admin master visualizar.
+
+    Token nunca é exposto cru — só um booleano 'configurado' indicando se há
+    valor cadastrado. Pra trocar, manda valor novo via TelegramConfigUpdate.
+    """
+    bot_configurado: bool
+    chat_id_default: Optional[str] = None
+    alerta_falha_backup: bool
+    alerta_push_negado: bool
+    alerta_volume_alto: bool
+
+class TelegramConfigUpdate(BaseModel):
+    """Atualização do Telegram global. Campos opcionais — só os enviados mudam.
+
+    bot_token vazio (string vazia) = limpa/desabilita; None = mantém valor atual.
+    """
+    bot_token: Optional[str] = None
+    chat_id_default: Optional[str] = None
+    alerta_falha_backup: Optional[bool] = None
+    alerta_push_negado: Optional[bool] = None
+    alerta_volume_alto: Optional[bool] = None
+
+class TelegramTestRequest(BaseModel):
+    """Payload do botão 'Enviar teste' no painel — chat_id opcional pra testar
+    o de uma empresa específica antes de salvar."""
+    chat_id: Optional[str] = None  # se None, usa o default global
 
 # Atividade (auditoria)
 class AtividadeOut(BaseModel):

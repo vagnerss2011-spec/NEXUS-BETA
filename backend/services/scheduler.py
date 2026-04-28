@@ -6,9 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import AsyncSessionLocal
 from models import Device, Backup, Configuracao, LogScheduler
 from services.ssh_service import run_backup
+from services.telegram import enviar_alerta_async
 from config import settings
 
 scheduler = AsyncIOScheduler()
+
+# Bundling: se falhas em uma run >= esse limite, manda 1 mensagem agregada
+# em vez de N individuais — evita spammar o grupo do Telegram quando uma
+# queda de internet derruba 50 devices ao mesmo tempo.
+MAX_ALERTAS_INDIVIDUAIS = 5
 
 PURGA_LOGS_JOB_ID = "purga_logs_diaria"
 
@@ -22,23 +28,29 @@ async def executar_backups():
         await db.flush()
 
         total = sucessos = falhas = 0
+        # Coleta as falhas pra decidir individual vs bundle no fim da run.
+        # Cada item: (device, erro_resumido, empresa_id)
+        falhas_da_run: list[tuple[Device, str, int | None]] = []
         try:
             result = await db.execute(select(Device).where(Device.ativo == True))
             devices = result.scalars().all()
             total = len(devices)
 
             for device in devices:
-                ok = await _backup_device(db, device, log.id)
+                ok, erro_msg = await _backup_device(db, device, log.id)
                 if ok:
                     sucessos += 1
                 else:
                     falhas += 1
+                    falhas_da_run.append((device, erro_msg, device.empresa_id))
 
             log.fim = datetime.now(timezone.utc)
             log.total = total
             log.sucessos = sucessos
             log.falhas = falhas
             await db.commit()
+
+            await _disparar_alertas_telegram(db, falhas_da_run)
 
         except Exception:
             log.fim = datetime.now(timezone.utc)
@@ -49,7 +61,55 @@ async def executar_backups():
             await db.commit()
 
 
-async def _backup_device(db: AsyncSession, device: Device, log_id: int) -> bool:
+async def _disparar_alertas_telegram(
+    db: AsyncSession, falhas: list[tuple[Device, str, int | None]],
+) -> None:
+    """Envia alertas Telegram para a run inteira.
+
+    Lógica de bundling:
+    - 0 falhas: silencioso (run perfeita não merece notificação)
+    - 1 a MAX_ALERTAS_INDIVIDUAIS: 1 mensagem por device falhado, agrupado por empresa
+      (mensagem vai pro chat da empresa quando ela tem chat próprio)
+    - acima: 1 mensagem agregada por empresa, listando os devices
+
+    Falhas com empresa_id=None (devices órfãos) viram alerta no chat default.
+    """
+    if not falhas:
+        return
+
+    # Agrupa por empresa pra respeitar override de chat_id por empresa
+    por_empresa: dict[int | None, list[tuple[Device, str]]] = {}
+    for dev, msg, emp_id in falhas:
+        por_empresa.setdefault(emp_id, []).append((dev, msg))
+
+    for emp_id, items in por_empresa.items():
+        if len(items) <= MAX_ALERTAS_INDIVIDUAIS:
+            for dev, msg in items:
+                titulo = f"❌ Falha de backup — {dev.nome}"
+                detalhes = (
+                    f"<b>IP:</b> <code>{dev.ip}</code>\n"
+                    f"<b>Fabricante:</b> {dev.fabricante.value if dev.fabricante else '—'}\n"
+                    f"<b>Erro:</b> <i>{(msg or '')[:300]}</i>"
+                )
+                await enviar_alerta_async(db, titulo, detalhes, empresa_id=emp_id, categoria="falha_backup")
+        else:
+            # Bundle agregado — lista nomes dos primeiros 10 e mostra contagem total.
+            nomes = ", ".join(d.nome for d, _ in items[:10])
+            mais = f" e mais {len(items) - 10}" if len(items) > 10 else ""
+            titulo = f"⚠️ {len(items)} backups falharam"
+            detalhes = (
+                f"<b>Devices:</b> {nomes}{mais}\n"
+                f"<i>Provável causa comum (rede, scheduler). Veja o painel para detalhes.</i>"
+            )
+            await enviar_alerta_async(db, titulo, detalhes, empresa_id=emp_id, categoria="falha_backup")
+
+
+async def _backup_device(db: AsyncSession, device: Device, log_id: int) -> tuple[bool, str | None]:
+    """Roda backup do device. Retorna (sucesso, erro_resumido).
+
+    erro_resumido é None quando ok; caso contrário, primeiras linhas do erro
+    pra alimentar a mensagem do Telegram (sem traceback completo).
+    """
     try:
         status, conteudo = run_backup(device)
         backup = Backup(
@@ -62,17 +122,20 @@ async def _backup_device(db: AsyncSession, device: Device, log_id: int) -> bool:
         db.add(backup)
         await db.flush()
         await _limpar_backups_antigos(db, device.id)
-        return status == "sucesso"
+        if status == "sucesso":
+            return True, None
+        return False, (conteudo or "Falha sem detalhe").splitlines()[0][:300]
     except Exception:
+        tb = traceback.format_exc()
         backup = Backup(
             device_id=device.id,
             log_scheduler_id=log_id,
             status="falha",
-            erro=traceback.format_exc(),
+            erro=tb,
         )
         db.add(backup)
         await db.flush()
-        return False
+        return False, tb.splitlines()[-1][:300]
 
 
 async def _limpar_backups_antigos(db: AsyncSession, device_id: int):

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Clock, Save, ScrollText } from 'lucide-react'
+import { Clock, Save, ScrollText, Bell, Send, AlertTriangle } from 'lucide-react'
 import api from '../services/api'
 
 // Converte dias <-> exibição em dias/meses (mês = 30 dias)
@@ -14,6 +14,9 @@ function viewToDays(value, unit) {
 }
 
 export default function Settings() {
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const isMaster = user.role === 'admin'
+
   const [hour, setHour] = useState(2)
   const [minute, setMinute] = useState(0)
   const [retValue, setRetValue] = useState(30)
@@ -21,6 +24,17 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
+
+  // ===== Telegram (admin master) =====
+  const [tgConfigurado, setTgConfigurado] = useState(false)
+  const [tgToken, setTgToken] = useState('')          // string vazia = não tocar; 'apagar' = limpar
+  const [tgChatId, setTgChatId] = useState('')
+  const [tgAlertaFalha, setTgAlertaFalha] = useState(true)
+  const [tgAlertaPushNegado, setTgAlertaPushNegado] = useState(true)
+  const [tgAlertaVolume, setTgAlertaVolume] = useState(true)
+  const [tgSaving, setTgSaving] = useState(false)
+  const [tgTestando, setTgTestando] = useState(false)
+  const [tgMessage, setTgMessage] = useState(null)
 
   useEffect(() => {
     api.get('/settings/schedule')
@@ -32,7 +46,19 @@ export default function Settings() {
         setRetUnit(v.unit)
       })
       .finally(() => setLoading(false))
-  }, [])
+
+    if (isMaster) {
+      api.get('/settings/telegram')
+        .then(r => {
+          setTgConfigurado(r.data.bot_configurado)
+          setTgChatId(r.data.chat_id_default || '')
+          setTgAlertaFalha(r.data.alerta_falha_backup)
+          setTgAlertaPushNegado(r.data.alerta_push_negado)
+          setTgAlertaVolume(r.data.alerta_volume_alto)
+        })
+        .catch(() => {})  // se falhar (sem permissão), só não mostra
+    }
+  }, [isMaster])
 
   async function handleSave(e) {
     e.preventDefault()
@@ -49,6 +75,54 @@ export default function Settings() {
       setMessage({ type: 'error', text: 'Erro ao salvar. Verifique suas permissões.' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function salvarTelegram() {
+    setTgSaving(true)
+    setTgMessage(null)
+    try {
+      // bot_token: vazio = não tocar; 'apagar' = limpar; outro = setar
+      const payload = {
+        chat_id_default: tgChatId,
+        alerta_falha_backup: tgAlertaFalha,
+        alerta_push_negado: tgAlertaPushNegado,
+        alerta_volume_alto: tgAlertaVolume,
+      }
+      if (tgToken === 'apagar') {
+        payload.bot_token = ''  // backend interpreta como "limpar"
+      } else if (tgToken && tgToken.length > 5) {
+        payload.bot_token = tgToken
+      }
+      const { data } = await api.put('/settings/telegram', payload)
+      setTgConfigurado(data.bot_configurado)
+      setTgChatId(data.chat_id_default || '')
+      setTgAlertaFalha(data.alerta_falha_backup)
+      setTgAlertaPushNegado(data.alerta_push_negado)
+      setTgAlertaVolume(data.alerta_volume_alto)
+      setTgToken('')  // não persistir o token na UI após salvar
+      setTgMessage({ type: 'success', text: 'Configuração Telegram salva.' })
+    } catch (err) {
+      const detail = err?.response?.data?.detail || 'Erro ao salvar Telegram.'
+      setTgMessage({ type: 'error', text: detail })
+    } finally {
+      setTgSaving(false)
+    }
+  }
+
+  async function testarTelegram() {
+    setTgTestando(true)
+    setTgMessage(null)
+    try {
+      const { data } = await api.post('/settings/telegram/test', {})
+      setTgMessage({
+        type: data.ok ? 'success' : 'error',
+        text: data.mensagem || (data.ok ? 'Teste enviado.' : 'Falha no teste.'),
+      })
+    } catch (err) {
+      setTgMessage({ type: 'error', text: err?.response?.data?.detail || 'Erro ao testar.' })
+    } finally {
+      setTgTestando(false)
     }
   }
 
@@ -152,6 +226,113 @@ export default function Settings() {
           {saving ? 'Salvando...' : 'Salvar configurações'}
         </button>
       </form>
+
+      {/* ===== Telegram (somente admin master) ===== */}
+      {isMaster && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl max-w-lg">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
+            <Bell size={18} className="text-slate-400" />
+            <h2 className="font-semibold text-white">Notificações Telegram</h2>
+          </div>
+          <div className="p-4 sm:p-5 space-y-4">
+            <div className="bg-sky-500/5 border border-sky-500/20 rounded-lg p-3 text-xs text-slate-300">
+              <p>
+                Bot único pra toda instalação. Cada empresa pode ter seu chat_id próprio
+                (configurável na página <span className="text-sky-300">Empresas</span>) — caso vazio, usa o default abaixo.
+              </p>
+              <p className="mt-1.5 text-slate-400">
+                <strong>Setup:</strong> crie bot via <span className="text-sky-300">@BotFather</span>,
+                adicione ao grupo, e use <span className="text-sky-300">@RawDataBot</span> pra descobrir o chat_id (formato negativo).
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">
+                Token do bot
+                {tgConfigurado && <span className="ml-2 text-emerald-400 text-xs">● configurado</span>}
+              </label>
+              <input
+                type="password"
+                value={tgToken}
+                onChange={e => setTgToken(e.target.value)}
+                placeholder={tgConfigurado ? '•••••••• (deixe vazio pra manter)' : '123456789:ABCdef...'}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+              {tgConfigurado && (
+                <button
+                  type="button"
+                  onClick={() => setTgToken('apagar')}
+                  className={`mt-1.5 text-xs ${tgToken === 'apagar' ? 'text-red-400' : 'text-slate-500 hover:text-red-400'} transition-colors`}
+                >
+                  {tgToken === 'apagar' ? '⚠ token será removido ao salvar' : 'Remover token (desabilita Telegram)'}
+                </button>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Chat ID default (grupo global)</label>
+              <input
+                type="text"
+                value={tgChatId}
+                onChange={e => setTgChatId(e.target.value)}
+                placeholder="-1001234567890"
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Empresas sem chat_id próprio recebem alertas aqui.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm text-slate-400">Categorias de alerta</p>
+              {[
+                { val: tgAlertaFalha, set: setTgAlertaFalha, label: 'Falha de backup SSH/Telnet (scheduler)' },
+                { val: tgAlertaPushNegado, set: setTgAlertaPushNegado, label: 'IP fora da whitelist em push (FTP/SFTP/TFTP)' },
+                { val: tgAlertaVolume, set: setTgAlertaVolume, label: 'Volume alto de uploads (>5/24h por device)' },
+              ].map(({ val, set, label }) => (
+                <label key={label} className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={val}
+                    onChange={e => set(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-500 bg-slate-700 text-sky-500 focus:ring-sky-500"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            {tgMessage && (
+              <p className={`text-sm flex items-start gap-2 ${tgMessage.type === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {tgMessage.type !== 'success' && <AlertTriangle size={14} className="mt-0.5 shrink-0" />}
+                {tgMessage.text}
+              </p>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={salvarTelegram}
+                disabled={tgSaving}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex-1"
+              >
+                <Save size={16} />
+                {tgSaving ? 'Salvando...' : 'Salvar'}
+              </button>
+              <button
+                type="button"
+                onClick={testarTelegram}
+                disabled={tgTestando || !tgConfigurado}
+                title={!tgConfigurado ? 'Salve o token primeiro' : 'Envia uma mensagem de teste pro chat default'}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex-1"
+              >
+                <Send size={16} />
+                {tgTestando ? 'Enviando...' : 'Enviar teste'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

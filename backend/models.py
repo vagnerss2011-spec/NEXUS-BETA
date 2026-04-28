@@ -67,6 +67,10 @@ class Empresa(Base):
     cnpj = Column(String(20), nullable=True)
     ativo = Column(Boolean, default=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    # Override do chat_id default global do Telegram. NULL = usa Configuracao.telegram_chat_id_default.
+    # Permite que cada empresa tenha seu próprio grupo enquanto o bot é único.
+    # Formato: ID numérico (ex.: -1001234567890 para grupo, número positivo pra usuário).
+    telegram_chat_id = Column(String(40), nullable=True)
     usuarios = relationship("User", back_populates="empresa")
     devices = relationship("Device", back_populates="empresa", cascade="all, delete-orphan")
 
@@ -134,6 +138,17 @@ class Configuracao(Base):
     backup_minute = Column(Integer, nullable=False, default=0)
     # Retenção de logs do scheduler em dias. 0 = desativado (não purga).
     log_retention_days = Column(Integer, nullable=False, default=30)
+    # ===== Telegram (alertas de falha/corrupção) =====
+    # Token do bot (Fernet-encrypted). NULL = notificações Telegram desabilitadas.
+    # 1 bot único pra toda a instalação; cada empresa pode ter seu chat_id próprio.
+    telegram_bot_token_enc = Column(String(500), nullable=True)
+    # Chat ID default — usado quando empresa.telegram_chat_id é NULL.
+    # Formato: ID numérico do grupo/canal (ex.: -1001234567890).
+    telegram_chat_id_default = Column(String(40), nullable=True)
+    # Liga/desliga categorias específicas de alerta (default: tudo ON quando token configurado).
+    telegram_alerta_falha_backup = Column(Boolean, nullable=False, default=True)
+    telegram_alerta_push_negado = Column(Boolean, nullable=False, default=True)
+    telegram_alerta_volume_alto = Column(Boolean, nullable=False, default=True)
 
 class Atividade(Base):
     __tablename__ = "atividades"

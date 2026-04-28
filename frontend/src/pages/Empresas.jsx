@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, X, Loader2, Building2, ArrowRight, ShieldCheck, Router, CheckCircle, XCircle, CircleDashed, PlusCircle, MinusCircle } from 'lucide-react'
 import api, { setCurrentEmpresa } from '../services/api'
 
-const BLANK = { nome: '', cnpj: '' }
+const BLANK = { nome: '', cnpj: '', telegram_chat_id: '' }
 
 function UltimaAlteracao({ ua }) {
   if (!ua) {
@@ -47,17 +47,40 @@ export default function Empresas() {
   useEffect(() => { load() }, [])
 
   function openNew() { setForm(BLANK); setModal('new') }
-  function openEdit(e) { setForm({ nome: e.nome, cnpj: e.cnpj || '' }); setModal(e.id) }
+  function openEdit(e) {
+    setForm({
+      nome: e.nome,
+      cnpj: e.cnpj || '',
+      telegram_chat_id: e.telegram_chat_id || '',
+    })
+    setModal(e.id)
+  }
 
   async function save() {
     setLoading(true)
     try {
+      // String vazia em telegram_chat_id volta ao default global. Para evitar
+      // sobrescrever em criação (POST não suporta esse campo no schema atual),
+      // só envia o campo no PUT.
       const payload = { ...form, cnpj: form.cnpj || null }
-      if (modal === 'new') await api.post('/empresas/', payload)
-      else await api.put(`/empresas/${modal}`, payload)
+      if (modal === 'new') {
+        // POST não aceita telegram_chat_id no schema; enviado depois via PUT se necessário
+        await api.post('/empresas/', { nome: payload.nome, cnpj: payload.cnpj })
+      } else {
+        await api.put(`/empresas/${modal}`, payload)
+      }
       setModal(null)
       load()
     } finally { setLoading(false) }
+  }
+
+  async function testarTelegramEmpresa(chatId) {
+    try {
+      const { data } = await api.post('/settings/telegram/test', { chat_id: chatId })
+      alert(data.mensagem || (data.ok ? 'Teste enviado' : 'Falha no teste'))
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Erro ao testar Telegram desta empresa')
+    }
   }
 
   async function del(id, nome) {
@@ -192,6 +215,29 @@ export default function Empresas() {
                   placeholder="00.000.000/0000-00"
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors" />
               </div>
+              {modal !== 'new' && (
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1.5">
+                    Telegram chat ID <span className="text-slate-500">(opcional — vazio = usa default global)</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input value={form.telegram_chat_id}
+                      onChange={e => setForm(f => ({ ...f, telegram_chat_id: e.target.value }))}
+                      placeholder="-1001234567890"
+                      className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-sky-500 transition-colors" />
+                    <button type="button"
+                      onClick={() => testarTelegramEmpresa(form.telegram_chat_id)}
+                      disabled={!form.telegram_chat_id}
+                      title="Envia mensagem de teste pra esse chat (sem salvar)"
+                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap">
+                      Testar
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Alertas desta empresa irão pra esse grupo. Configure o token global em <span className="text-sky-300">Configurações</span>.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="flex gap-3 p-4 sm:p-5 border-t border-slate-700">
               <button onClick={() => setModal(null)}

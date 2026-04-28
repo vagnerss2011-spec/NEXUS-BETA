@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, select, delete, func
 from sqlalchemy.orm import sessionmaker, Session
 from config import settings
 from models import Device, Backup, Atividade, TipoAtividade
+from services.telegram import enviar_alerta
 
 # Engine SÍNCRONO compartilhado entre todos os servidores de push (FTP/SFTP/TFTP).
 # A DATABASE_URL é configurada com +asyncpg para o resto do app; aqui trocamos
@@ -86,6 +87,21 @@ def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int
                 alvo_tipo="device", alvo_nome=device.nome,
                 detalhe=f"{uploads} uploads em 24h",
             ))
+            # Alerta Telegram (1x por janela 24h, mesma logica de dedupe da atividade).
+            # Falha-tolerante — não propaga se Telegram fora do ar.
+            enviar_alerta(
+                db,
+                titulo=f"📈 Volume alto de uploads — {device.nome}",
+                detalhes=(
+                    f"<b>Device:</b> {device.nome}\n"
+                    f"<b>IP origem:</b> <code>{ip or '?'}</code>\n"
+                    f"<b>Uploads em 24h:</b> {uploads}\n"
+                    f"<i>Limite normal: até {VOLUME_ALTO_LIMITE} uploads/24h. "
+                    f"Verifique se está em loop ou se houve erro de scheduler do equipamento.</i>"
+                ),
+                empresa_id=device.empresa_id,
+                categoria="volume_alto",
+            )
 
 
 def auditar_acesso_negado(db: Session, ip: str | None, alvo_nome: str | None,
@@ -96,3 +112,17 @@ def auditar_acesso_negado(db: Session, ip: str | None, alvo_nome: str | None,
         alvo_tipo="device", alvo_nome=alvo_nome, detalhe=detalhe,
     ))
     db.commit()
+    # Alerta Telegram. Em ambientes com brute-force ativo isso pode spammar —
+    # fail2ban (jail nexus-ftp com docker-allports) bane o IP após 3 falhas em
+    # 10 min, então o volume é limitado naturalmente.
+    enviar_alerta(
+        db,
+        titulo="🛑 Acesso push negado",
+        detalhes=(
+            f"<b>IP origem:</b> <code>{ip or '?'}</code>\n"
+            f"<b>Tentou usuário:</b> <code>{alvo_nome or '?'}</code>\n"
+            f"<b>Motivo:</b> <i>{detalhe}</i>"
+        ),
+        empresa_id=empresa_id,
+        categoria="push_negado",
+    )

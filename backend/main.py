@@ -157,6 +157,36 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS log_retention_days INTEGER NOT NULL DEFAULT 30
         """))
 
+        # 8.0.1) configuracoes: campos de Telegram (alertas de falha/corrupção).
+        # Token do bot encriptado com Fernet. Chat IDs em texto (não secret).
+        # Toggles per-categoria default ON; só dispara se token estiver setado.
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS telegram_bot_token_enc VARCHAR(500)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS telegram_chat_id_default VARCHAR(40)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS telegram_alerta_falha_backup BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS telegram_alerta_push_negado BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS telegram_alerta_volume_alto BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+
+        # 8.0.2) empresas.telegram_chat_id (override do default global por empresa)
+        await conn.execute(text("""
+            ALTER TABLE empresas
+            ADD COLUMN IF NOT EXISTS telegram_chat_id VARCHAR(40)
+        """))
+
         # 8.1.x) devices: campos de FTP push (idempotente)
         # usuario_ssh precisa virar nullable — devices via ftp_push não têm SSH user.
         await conn.execute(text("""
