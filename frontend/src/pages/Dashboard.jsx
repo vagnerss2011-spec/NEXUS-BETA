@@ -186,7 +186,7 @@ export default function Dashboard() {
             <p className="text-slate-400 text-sm text-center py-8">Nenhuma empresa cadastrada</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[600px]">
                 <thead className="bg-slate-900/50 text-[10px] uppercase tracking-wider text-slate-400">
                   <tr>
                     <th className="text-left px-5 py-2.5">Empresa</th>

@@ -643,7 +643,10 @@ export default function Devices() {
       </div>
 
       <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+        {/* overflow-x-auto + min-w-[640px] na table: em telas estreitas (< sm)
+            o usuário rola horizontalmente em vez de quebrar layout. */}
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
           <thead>
             <tr className="border-b border-slate-700 text-slate-400 text-left">
               <th className="px-5 py-3 font-medium">ID</th>
@@ -750,6 +753,7 @@ export default function Devices() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {backupResult && (

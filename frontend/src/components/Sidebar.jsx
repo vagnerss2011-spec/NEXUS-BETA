@@ -1,8 +1,10 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Router, Archive, Users, LogOut, Shield, Settings, ScrollText, Building2, Repeat } from 'lucide-react'
+import { LayoutDashboard, Router, Archive, Users, LogOut, Shield, Settings, ScrollText, Building2, Repeat, X } from 'lucide-react'
 import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
 
-export default function Sidebar() {
+// Em mobile (< md) a sidebar vira drawer overlay controlada por `open`/`onClose`.
+// Em desktop (md+) o `open` é ignorado e a sidebar fica sempre visível em flex.
+export default function Sidebar({ open = false, onClose = () => {} }) {
   const navigate = useNavigate()
   const user = JSON.parse(localStorage.getItem('user') || '{}')
   const empresa = getCurrentEmpresa()
@@ -33,13 +35,31 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-64 bg-slate-800 border-r border-slate-700 flex flex-col">
-      <div className="p-5 border-b border-slate-700">
-        <div className="flex items-center gap-2">
-          <Shield className="text-sky-400" size={22} />
-          <span className="font-bold text-lg tracking-wide text-white">NEXUS BETA</span>
+    <aside
+      className={`
+        fixed md:static inset-y-0 left-0 z-40
+        w-64 bg-slate-800 border-r border-slate-700 flex flex-col
+        transform transition-transform duration-200
+        ${open ? 'translate-x-0' : '-translate-x-full'}
+        md:translate-x-0
+      `}
+    >
+      <div className="p-5 border-b border-slate-700 flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Shield className="text-sky-400" size={22} />
+            <span className="font-bold text-lg tracking-wide text-white">NEXUS BETA</span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">Backup Manager</p>
         </div>
-        <p className="text-xs text-slate-400 mt-1">Backup Manager</p>
+        {/* Botão de fechar drawer — só aparece em mobile */}
+        <button
+          onClick={onClose}
+          className="md:hidden text-slate-400 hover:text-white"
+          aria-label="Fechar menu"
+        >
+          <X size={20} />
+        </button>
       </div>
 
       {empresa?.id && (
@@ -50,7 +70,7 @@ export default function Sidebar() {
             <p className="text-sm text-white font-medium truncate flex-1">{empresa.nome || `#${empresa.id}`}</p>
           </div>
           {isMaster && (
-            <button onClick={trocarEmpresa}
+            <button onClick={() => { trocarEmpresa(); onClose() }}
               className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs text-slate-400 hover:text-sky-400 border border-slate-700 hover:border-sky-500/50 rounded-md py-1.5 transition-colors">
               <Repeat size={12} /> Trocar empresa
             </button>
@@ -61,6 +81,7 @@ export default function Sidebar() {
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {links.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to}
+            onClick={onClose}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                 isActive

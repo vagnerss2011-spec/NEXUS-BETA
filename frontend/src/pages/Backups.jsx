@@ -259,8 +259,8 @@ export default function Backups() {
                 </button>
 
                 {aberto && (
-                  <div className="border-t border-slate-700 bg-slate-900/30">
-                    <table className="w-full text-sm">
+                  <div className="border-t border-slate-700 bg-slate-900/30 overflow-x-auto">
+                    <table className="w-full text-sm min-w-[720px]">
                       <thead>
                         <tr className="border-b border-slate-700/50 text-slate-500 text-left text-xs">
                           <th className="px-5 py-2 font-medium">Data/Hora</th>
