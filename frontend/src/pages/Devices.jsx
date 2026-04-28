@@ -567,7 +567,7 @@ export default function Devices() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Dispositivos</h1>
           <p className="text-slate-400 text-sm mt-1">
@@ -577,15 +577,15 @@ export default function Devices() {
           </p>
         </div>
         {canEdit && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button onClick={openNewFtp}
               title="Cadastrar dispositivo cujo backup chega via push (FTP, SFTP ou TFTP)"
-              className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
               <Upload size={16} /> Novo via Upload
             </button>
             <button onClick={openNew}
               title="Cadastrar dispositivo coletado por SSH ou Telnet"
-              className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
               <Plus size={16} /> Novo Dispositivo
             </button>
           </div>
@@ -759,7 +759,7 @@ export default function Devices() {
       {backupResult && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 {backupResult.backup.status === 'sucesso'
                   ? <CheckCircle size={20} className="text-emerald-400" />
@@ -771,7 +771,7 @@ export default function Devices() {
               </div>
               <button onClick={() => setBackupResult(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="p-5 flex-1 overflow-auto">
+            <div className="p-4 sm:p-5 flex-1 overflow-auto">
               {backupResult.backup.status === 'sucesso' ? (
                 <>
                   <div className="flex items-center gap-2 mb-3">
@@ -788,7 +788,7 @@ export default function Devices() {
                 </div>
               )}
             </div>
-            <div className="p-5 border-t border-slate-700 shrink-0 flex gap-3">
+            <div className="p-4 sm:p-5 border-t border-slate-700 shrink-0 flex gap-3">
               {backupResult.backup.status === 'sucesso' && (
                 <button
                   onClick={() => {
@@ -814,7 +814,7 @@ export default function Devices() {
       {credencialFtp && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-2xl border border-violet-500/40 w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 <Key size={20} className="text-violet-300" />
                 <div>
@@ -824,7 +824,7 @@ export default function Devices() {
               </div>
               <button onClick={() => setCredencialFtp(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+            <div className="p-4 sm:p-5 space-y-4 flex-1 overflow-y-auto">
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-200 flex items-start gap-2">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <span><strong>Anote a senha agora.</strong> Por segurança, ela não será mostrada novamente. Se perder, é só regenerar pelo botão na linha do dispositivo.</span>
@@ -912,7 +912,7 @@ export default function Devices() {
                 </div>
               )}
             </div>
-            <div className="p-5 border-t border-slate-700 shrink-0">
+            <div className="p-4 sm:p-5 border-t border-slate-700 shrink-0">
               <button onClick={() => setCredencialFtp(null)}
                 className="w-full bg-violet-500 hover:bg-violet-400 text-white py-2 rounded-lg text-sm font-medium transition-colors">
                 Já anotei, fechar
@@ -925,7 +925,7 @@ export default function Devices() {
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-md max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 <h2 className="font-semibold text-white">
                   {modal === 'new' ? 'Novo Dispositivo'
@@ -940,7 +940,7 @@ export default function Devices() {
               </div>
               <button onClick={fecharModal} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+            <div className="p-4 sm:p-5 space-y-4 flex-1 overflow-y-auto">
               {[
                 { label: 'Nome', key: 'nome', placeholder: 'Router-Core-SP' },
                 { label: 'IP (IPv4 ou IPv6)', key: 'ip', placeholder: '192.168.1.1 ou 2001:db8::1' },
@@ -1248,7 +1248,7 @@ export default function Devices() {
               )}
             </div>
             {confirmandoFab ? (
-              <div className="p-5 border-t border-slate-700 bg-amber-500/5 shrink-0">
+              <div className="p-4 sm:p-5 border-t border-slate-700 bg-amber-500/5 shrink-0">
                 <div className="flex items-start gap-3 mb-4">
                   <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
                   <div className="text-sm">
@@ -1274,7 +1274,7 @@ export default function Devices() {
                 </div>
               </div>
             ) : (
-              <div className="flex gap-3 p-5 border-t border-slate-700 shrink-0">
+              <div className="flex gap-3 p-4 sm:p-5 border-t border-slate-700 shrink-0">
                 <button onClick={fecharModal}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm transition-colors">
                   Cancelar

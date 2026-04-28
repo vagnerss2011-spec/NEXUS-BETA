@@ -9,13 +9,14 @@ import StatusBadge from '../components/StatusBadge'
 
 function StatCard({ icon: Icon, label, value, color }) {
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
-        <Icon size={22} />
+    <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
+      <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 ${color}`}>
+        <Icon size={20} className="sm:hidden" />
+        <Icon size={22} className="hidden sm:block" />
       </div>
-      <div>
-        <p className="text-slate-400 text-sm">{label}</p>
-        <p className="text-2xl font-bold text-white">{value}</p>
+      <div className="min-w-0">
+        <p className="text-slate-400 text-xs sm:text-sm truncate">{label}</p>
+        <p className="text-xl sm:text-2xl font-bold text-white">{value}</p>
       </div>
     </div>
   )
@@ -130,7 +131,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4 sm:flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-slate-400 text-sm mt-1 flex items-center gap-2 flex-wrap">
@@ -178,7 +179,7 @@ export default function Dashboard() {
 
       {modoGeral && (
         <div className="bg-slate-800 border border-slate-700 rounded-xl">
-          <div className="p-5 border-b border-slate-700 flex items-center gap-2">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
             <Building2 size={18} className="text-slate-400" />
             <h2 className="font-semibold text-white">Resumo por empresa</h2>
           </div>
@@ -227,7 +228,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-slate-800 border border-slate-700 rounded-xl">
-          <div className="p-5 border-b border-slate-700 flex items-center gap-2">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
             <Clock size={18} className="text-slate-400" />
             <h2 className="font-semibold text-white">Backups Recentes</h2>
           </div>
@@ -253,7 +254,7 @@ export default function Dashboard() {
         </div>
 
         <div className="bg-slate-800 border border-slate-700 rounded-xl">
-          <div className="p-5 border-b border-slate-700 flex items-center justify-between">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Activity size={18} className="text-slate-400" />
               <h2 className="font-semibold text-white">Atividade Recente</h2>

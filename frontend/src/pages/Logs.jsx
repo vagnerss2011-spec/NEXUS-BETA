@@ -90,20 +90,20 @@ export default function Logs() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Logs do Scheduler</h1>
           <p className="text-slate-400 text-sm mt-1">Histórico de execuções do backup automático</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {canDelete && logs.length > 0 && (
             <button onClick={deletarTodos}
-              className="flex items-center gap-2 text-red-400 hover:text-red-300 border border-red-500/40 hover:border-red-500/70 px-3 py-2 rounded-lg text-sm transition-colors">
+              className="flex items-center justify-center gap-2 text-red-400 hover:text-red-300 border border-red-500/40 hover:border-red-500/70 px-3 py-2 rounded-lg text-sm transition-colors flex-1 sm:flex-none">
               <Trash2 size={15} /> Excluir todos
             </button>
           )}
           <button onClick={load} disabled={loading}
-            className="flex items-center gap-2 text-slate-400 hover:text-white border border-slate-600 px-3 py-2 rounded-lg text-sm transition-colors">
+            className="flex items-center justify-center gap-2 text-slate-400 hover:text-white border border-slate-600 px-3 py-2 rounded-lg text-sm transition-colors flex-1 sm:flex-none">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Atualizar
           </button>
         </div>
@@ -195,7 +195,7 @@ export default function Logs() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-3xl max-h-[88vh] flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-700 shrink-0">
               <div className="flex items-center gap-3">
                 <StatusIcon log={detalhe} />
                 <div>
@@ -212,7 +212,7 @@ export default function Logs() {
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-auto p-5 space-y-4">
+            <div className="flex-1 overflow-auto p-4 sm:p-5 space-y-4">
 
               {/* Erro geral do scheduler */}
               {detalhe.erro_geral && (

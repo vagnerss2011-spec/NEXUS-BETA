@@ -64,12 +64,12 @@ export default function Settings() {
 
       <form onSubmit={handleSave} className="space-y-6 max-w-lg">
         <div className="bg-slate-800 border border-slate-700 rounded-xl">
-          <div className="p-5 border-b border-slate-700 flex items-center gap-2">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
             <Clock size={18} className="text-slate-400" />
             <h2 className="font-semibold text-white">Horário do Backup Automático</h2>
           </div>
 
-          <div className="p-5 space-y-5">
+          <div className="p-4 sm:p-5 space-y-5">
             {loading ? (
               <p className="text-slate-400 text-sm">Carregando...</p>
             ) : (
@@ -103,12 +103,12 @@ export default function Settings() {
         </div>
 
         <div className="bg-slate-800 border border-slate-700 rounded-xl">
-          <div className="p-5 border-b border-slate-700 flex items-center gap-2">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
             <ScrollText size={18} className="text-slate-400" />
             <h2 className="font-semibold text-white">Retenção de Logs do Scheduler</h2>
           </div>
 
-          <div className="p-5 space-y-4">
+          <div className="p-4 sm:p-5 space-y-4">
             {loading ? (
               <p className="text-slate-400 text-sm">Carregando...</p>
             ) : (

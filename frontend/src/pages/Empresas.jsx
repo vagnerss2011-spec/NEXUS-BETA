@@ -82,13 +82,13 @@ export default function Empresas() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white">Empresas</h1>
           <p className="text-slate-400 text-sm mt-1">{empresas.length} empresa(s) cadastrada(s) — selecione para gerenciar</p>
         </div>
         <button onClick={openNew}
-          className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          className="flex items-center justify-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
           <Plus size={16} /> Nova Empresa
         </button>
       </div>
@@ -100,7 +100,7 @@ export default function Empresas() {
           </div>
         )}
         {empresas.map(e => (
-          <div key={e.id} className="bg-slate-800 border border-slate-700 rounded-xl p-5 flex flex-col gap-4 hover:border-sky-500/60 transition-colors">
+          <div key={e.id} className="bg-slate-800 border border-slate-700 rounded-xl p-4 sm:p-5 flex flex-col gap-4 hover:border-sky-500/60 transition-colors">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-11 h-11 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0">
@@ -175,11 +175,11 @@ export default function Empresas() {
       {modal !== null && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-md">
-            <div className="flex items-center justify-between p-5 border-b border-slate-700">
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-700">
               <h2 className="font-semibold text-white">{modal === 'new' ? 'Nova Empresa' : 'Editar Empresa'}</h2>
               <button onClick={() => setModal(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-4 sm:p-5 space-y-4">
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Nome</label>
                 <input value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))}
@@ -193,7 +193,7 @@ export default function Empresas() {
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 transition-colors" />
               </div>
             </div>
-            <div className="flex gap-3 p-5 border-t border-slate-700">
+            <div className="flex gap-3 p-4 sm:p-5 border-t border-slate-700">
               <button onClick={() => setModal(null)}
                 className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg text-sm transition-colors">
                 Cancelar
