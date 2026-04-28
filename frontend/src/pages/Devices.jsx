@@ -273,6 +273,72 @@ function montarExemploPush(protocolo, fabricante, servidor, usuario, senha) {
     .replaceAll('<SENHA>', senha || '<SENHA>')
 }
 
+// === NTP client ===
+// Equipamentos sem hora correta geram timestamps errados nos logs e backups.
+// O servidor (45.5.16.28) roda chrony desde 2026-04-27 e aceita conexões NTP
+// dos CIDRs RFC1918 + RFC6598 + 45.5.16.0/22 (UDP/123). Cada exemplo abaixo
+// é o comando idiomático do fabricante para apontar NTP client pra esse IP.
+const NTP_EXAMPLES = {
+  mikrotik:   `# RouterOS v6: cliente NTP simples
+/system ntp client set enabled=yes primary-ntp=<SERVIDOR>
+/system clock set time-zone-name=America/Sao_Paulo`,
+  mikrotik_v7:`# RouterOS v7: a sintaxe mudou — usa 'servers' (plural) em vez de 'primary-ntp'
+/system ntp client set enabled=yes servers=<SERVIDOR>
+/system clock set time-zone-name=America/Sao_Paulo`,
+  huawei:    `# Huawei VRP (MA5800/MA5680T) — em modo config:
+ntp-service unicast-server <SERVIDOR>
+ntp-service authentication enable false
+clock timezone BRT minus 03:00:00`,
+  cisco:     `configure terminal
+ ntp server <SERVIDOR>
+ clock timezone BRT -3 0
+end
+write memory`,
+  juniper:   `set system ntp server <SERVIDOR>
+set system time-zone America/Sao_Paulo
+commit`,
+  datacom:   `# Datacom DmOS:
+config
+ntp server <SERVIDOR>
+clock timezone America/Sao_Paulo
+commit`,
+  intelbras: `# Intelbras (Cisco-like):
+configure terminal
+ ntp server <SERVIDOR>
+ clock timezone BRT -3
+end`,
+  zte:       `# ZTE ZXR10/ZXA10:
+configure terminal
+ ntp server <SERVIDOR>
+ clock timezone BRT -3 0
+end`,
+  nokia:     `# Nokia ISAM/7360:
+configure system time ntp server <SERVIDOR>
+configure system time zone BRT offset -3
+admin save`,
+  fiberhome: `# Fiberhome AN5516/AN6000:
+set ntp 1 ip <SERVIDOR>
+set timezone -3`,
+  vsolutions:`# V-SOL OLT:
+enable
+configure terminal
+ ntp server <SERVIDOR>
+ clock timezone BRT -3
+end`,
+  ubiquiti:  `# Ubiquiti EdgeOS:
+configure
+set system ntp server <SERVIDOR>
+set system time-zone America/Sao_Paulo
+commit ; save ; exit`,
+  outro:     `# Comando genérico — adapte ao manual do fabricante:
+ntp server <SERVIDOR>`,
+}
+
+function montarExemploNtp(fabricante, servidor) {
+  const tpl = NTP_EXAMPLES[fabricante] || NTP_EXAMPLES.outro
+  return tpl.replaceAll('<SERVIDOR>', servidor || '<SERVIDOR>')
+}
+
 // Extrai mensagem útil do err do axios. Cobre 3 formatos:
 // - string (HTTPException simples)
 // - array de objetos (Pydantic validation: [{loc, msg, ...}])
@@ -781,6 +847,29 @@ export default function Devices() {
                   </pre>
                 </div>
               )}
+              {credencialFtp.fabricante && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs text-slate-400">
+                      Configurar NTP client (data/hora correta nos backups) — <span className="capitalize text-emerald-300">{labelFabricante(credencialFtp.fabricante)}</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(montarExemploNtp(
+                        credencialFtp.fabricante,
+                        IP_SERVIDOR_BACKUP,
+                      ))}
+                      title="Copiar comando NTP"
+                      className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
+                    >
+                      <Copy size={12} /> Copiar
+                    </button>
+                  </div>
+                  <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-56 overflow-auto">
+                    {montarExemploNtp(credencialFtp.fabricante, IP_SERVIDOR_BACKUP)}
+                  </pre>
+                </div>
+              )}
             </div>
             <div className="p-5 border-t border-slate-700 shrink-0">
               <button onClick={() => setCredencialFtp(null)}
@@ -922,6 +1011,27 @@ export default function Devices() {
                       {form.protocolo === 'tftp_push'
                         ? 'TFTP não usa user/senha — só o IP de origem identifica o device.'
                         : 'Após salvar, você verá o mesmo comando já com usuário e senha gerados. Adapte ao firmware específico se necessário.'}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-sm text-slate-400">
+                        Configurar NTP client (data/hora correta nos backups) — <span className="capitalize text-emerald-300">{labelFabricante(form.fabricante)}</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(montarExemploNtp(form.fabricante, IP_SERVIDOR_BACKUP))}
+                        title="Copiar comando NTP"
+                        className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
+                      >
+                        <Copy size={12} /> Copiar
+                      </button>
+                    </div>
+                    <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
+                      {montarExemploNtp(form.fabricante, IP_SERVIDOR_BACKUP)}
+                    </pre>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Equipamentos sem NTP geram timestamps errados. O servidor aceita NTP em UDP/123 dos CIDRs RFC1918 + RFC6598 + 45.5.16.0/22.
                     </p>
                   </div>
                 </>
