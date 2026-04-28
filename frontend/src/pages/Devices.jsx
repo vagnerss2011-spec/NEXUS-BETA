@@ -83,10 +83,24 @@ const FTP_EXAMPLES = {
   },
   huawei: {
     titulo: 'Huawei VRP',
-    cmd: `# Salva config corrente em flash e envia via FTP.
-# Em alguns equipamentos use 'tftp' ou 'sftp' se FTP estiver desabilitado.
-save
-backup configuration to ftp <SERVIDOR> <USUARIO> <SENHA> backup-huawei.cfg`,
+    cmd: `# Huawei VRP (MA5800/MA5680T) — backup automático recorrente via FTP.
+# Validado em 2026-04-27 com OLT MA5800 firmware Gaia_X2.
+# Em modo config:
+
+# 1) Agendar quando rodar o auto-backup (horários ajustáveis ao seu gosto):
+auto-backup period data interval 1 time 05:00
+auto-backup period configuration interval 1 time 03:30
+auto-backup period data enable
+auto-backup period configuration enable
+
+# 2) Definir o destino — onde a config será exportada via FTP.
+# Sintaxe: file-server auto-backup configuration primary <IP> <PROTO> <USER> <SENHA> [<PORTA>]
+# Porta opcional — default 21 pra FTP.
+file-server auto-backup configuration primary <SERVIDOR> FTP <USUARIO> <SENHA>
+
+# (Opcional) Destino do backup de data (eventos/PMs). Se não usar, comente
+# a linha 'auto-backup period data enable' acima.
+# file-server auto-backup data primary <SERVIDOR> FTP <USUARIO> <SENHA>`,
   },
   ubiquiti: {
     titulo: 'Ubiquiti EdgeOS',
@@ -179,19 +193,26 @@ write`,
 const SFTP_EXAMPLES = {
   mikrotik:   '# Mikrotik não tem SFTP nativo no /tool fetch. Use FTP ou TFTP.',
   mikrotik_v7:'# Mikrotik não tem SFTP nativo no /tool fetch. Use FTP ou TFTP.',
-  huawei:    `# Huawei VRP (MA5800/MA5680T) — credenciais SFTP são setadas
-# SEPARADAMENTE em modo privilege ANTES do backup.
+  huawei:    `# Huawei VRP (MA5800/MA5680T) — backup automático recorrente via SFTP.
 # Validado em 2026-04-27 com OLT MA5800 firmware Gaia_X2.
+# Em modo config:
 
-# 1) Saia do modo config (se estiver) e em modo privilege configure as creds:
-quit
-ssh sftp set <USUARIO> <SENHA>
-display ssh sftp                         # confirma que salvou
+# 1) Agendar quando rodar o auto-backup (horários ajustáveis ao seu gosto):
+auto-backup period data interval 1 time 05:00
+auto-backup period configuration interval 1 time 03:30
+auto-backup period data enable
+auto-backup period configuration enable
 
-# 2) Volte ao modo config e dispare o backup (porta 22 default — VRP não
-#    aceita porta custom nesse comando, por isso liberamos a 22 aqui):
-config
-backup configuration sftp <SERVIDOR> backup-huawei.cfg`,
+# 2) Definir o destino — onde a config será exportada via SFTP.
+# Sintaxe: file-server auto-backup configuration primary <IP> <PROTO> <USER> <SENHA> [<PORTA>]
+# Porta opcional — default 22 pra SFTP. NÃO informe porta se SSH host estiver
+# em 22 padrão (o nosso está, justamente porque VRP não aceita porta custom
+# em comandos antigos como 'backup configuration sftp').
+file-server auto-backup configuration primary <SERVIDOR> SFTP <USUARIO> <SENHA>
+
+# (Opcional) Destino do backup de data (eventos/PMs). Se não usar, comente
+# a linha 'auto-backup period data enable' acima.
+# file-server auto-backup data primary <SERVIDOR> SFTP <USUARIO> <SENHA>`,
   cisco:     `# Cisco IOS-XE suporta SCP/SFTP via porta 22 default.
 configure terminal
  ip ssh client algorithm encryption aes128-ctr aes192-ctr aes256-ctr
