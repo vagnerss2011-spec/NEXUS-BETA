@@ -54,6 +54,12 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
       TZ: ${TZ:-America/Sao_Paulo}
+      # IP que o pyftpdlib anuncia em respostas PASV. Sem isso, container
+      # Docker bridge anuncia 172.18.x.x (privado interno) e clientes
+      # externos não conseguem completar a conexão de dados → arquivos
+      # chegam com 0 bytes. Setar com IP público do servidor (ou IP
+      # roteável pelos clientes). Vazio = comportamento default.
+      FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:-}
     depends_on:
       db:
         condition: service_healthy
