@@ -253,6 +253,14 @@ def iniciar_ftp_server() -> ThreadedFTPServer | None:
     handler.use_sendfile = False
     handler.max_login_attempts = 3
     handler.tcp_no_delay = True
+    # Em container Docker bridge, pyftpdlib veria local IP como 172.18.x.x e
+    # mandaria o cliente conectar nesse IP privado — quebra a conexão de
+    # dados PASV (control OK, dados falham → arquivo de 0 bytes). Settar o
+    # IP público/roteável faz o PASV funcionar. Configurável via env.
+    from config import settings as _settings
+    if _settings.FTP_MASQUERADE_ADDRESS:
+        handler.masquerade_address = _settings.FTP_MASQUERADE_ADDRESS
+        log.info("FTP PASV masquerade address: %s", _settings.FTP_MASQUERADE_ADDRESS)
 
     server = ThreadedFTPServer(("0.0.0.0", 21), handler)
     server.max_cons = 256
