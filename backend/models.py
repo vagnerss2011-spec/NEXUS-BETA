@@ -141,6 +141,12 @@ class Backup(Base):
     #               geralmente disparado por um scheduler configurado no device.
     # Default 'manual' cobre rows antigas (pré-migração) sem quebrar.
     origem = Column(String(16), nullable=False, server_default="manual", default="manual")
+    # Nome do arquivo original (push) — preserva identificação da fonte. Crítico
+    # quando 1 device cadastrado (ex.: UNM2000) recebe múltiplos arquivos por dia
+    # de OLTs distintas que ele gerencia. Sem esse campo, vira "qual backup veio
+    # de qual OLT?". NULL = backup sem origem-arquivo (manual/scheduler ou push
+    # antigo pré-migração).
+    nome_arquivo = Column(String(255), nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     device = relationship("Device", back_populates="backups")
 

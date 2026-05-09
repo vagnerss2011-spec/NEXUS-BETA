@@ -54,7 +54,60 @@ if not auth_log.handlers:  # idempotente se reimportado
         auth_log.addHandler(logging.StreamHandler())
 
 FTP_UPLOAD_DIR = "/var/ftp/uploads"
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB — para devices que enviam .cfg em texto
+# UNM2000 (NMS Fiberhome) envia o backup do banco como .zip (~3 MB no doc oficial,
+# mas pode crescer com mais OLTs gerenciadas). 50 MB cobre caso real e ainda fica
+# bem abaixo de uma faixa abusiva. Aplicado por device.tipo no _max_file_size_para().
+MAX_FILE_SIZE_UNM2000 = 50 * 1024 * 1024
+
+
+def _max_file_size_para(device) -> int:
+    """Limite de tamanho conforme tipo do device.
+
+    UNM2000 manda zip do banco próprio (vários MB) + arquivos de cada OLT
+    gerenciada — 5 MB do default explodiria no zip. Demais devices seguem
+    no limite menor pra evitar abuso.
+    """
+    try:
+        if device.tipo and device.tipo.value == "unm2000":
+            return MAX_FILE_SIZE_UNM2000
+    except AttributeError:
+        pass
+    return MAX_FILE_SIZE
+
+
+# Extensões reconhecidas como binário — armazenadas em base64 no campo conteudo.
+# Outras extensões são tratadas como texto (configs CLI tipicamente .cfg/.txt/.rsc).
+_BIN_EXTS = (".zip", ".gz", ".tar", ".tgz", ".bin", ".gpg", ".enc", ".7z", ".bz2")
+
+
+def ler_arquivo_pra_persistir(filepath: str, nome_arquivo: str | None = None) -> str:
+    """Lê o arquivo recebido e devolve string pronta pra coluna Backup.conteudo.
+
+    - Se a extensão indicar binário (.zip/.gz/.tar/...) ou se o conteúdo não
+      decodificar como texto (UTF-8/Latin-1), armazena em base64 com prefixo
+      'BASE64:' pra que o frontend saiba decodificar antes de exibir/baixar.
+    - Caso contrário, devolve texto puro (UTF-8 com fallback Latin-1) — mantém
+      compatibilidade com a UI de visualização de config.
+    """
+    import base64
+    nome = (nome_arquivo or "").lower()
+    parece_binario = nome.endswith(_BIN_EXTS)
+
+    with open(filepath, "rb") as f:
+        raw = f.read()
+
+    if not parece_binario:
+        # Tenta texto. Se não for UTF-8 limpo nem Latin-1 razoável, marca binário.
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                return raw.decode("latin-1")
+            except UnicodeDecodeError:
+                parece_binario = True
+
+    return "BASE64:" + base64.b64encode(raw).decode("ascii")
 
 
 def _ip_match(remote_ip: str, allowed_cidr: str | None) -> bool:
@@ -156,20 +209,29 @@ class NexusFTPHandler(FTPHandler):
             tamanho = os.path.getsize(filepath)
         except OSError:
             return
-        if tamanho == 0 or tamanho > MAX_FILE_SIZE:
-            log.warning("FTP upload de %s rejeitado: tamanho=%s", username, tamanho)
+        if tamanho == 0:
+            log.warning("FTP upload de %s rejeitado: tamanho=0", username)
             return
 
-        with open(filepath, "r", errors="replace") as f:
-            conteudo = f.read()
-
+        # Resolve device antes de avaliar limite (UNM2000 tem limite maior).
         with SyncSessionLocal() as db:
             dev = db.execute(
                 select(Device).where(Device.ftp_user == username)
             ).scalar_one_or_none()
             if not dev:
                 return
-            processar_upload(dev, conteudo, ip, tamanho, db)
+            limite = _max_file_size_para(dev)
+            if tamanho > limite:
+                log.warning("FTP upload de %s rejeitado: tamanho=%s > limite=%s",
+                            username, tamanho, limite)
+                return
+
+            # Preserva nome original do arquivo (pra UNM2000 distinguir qual OLT
+            # mandou cada cfg). filepath aqui é o destino completo no disco;
+            # basename pega só o nome enviado pelo cliente.
+            nome_arquivo = os.path.basename(filepath)
+            conteudo = ler_arquivo_pra_persistir(filepath, nome_arquivo)
+            processar_upload(dev, conteudo, ip, tamanho, db, nome_arquivo=nome_arquivo)
             db.commit()
 
 

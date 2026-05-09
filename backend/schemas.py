@@ -182,6 +182,7 @@ class BackupOut(BaseModel):
     erro: Optional[str] = None
     log_scheduler_id: Optional[int] = None  # preenchido = scheduler do painel
     origem: str = "manual"  # manual | scheduler | push (vide models.Backup.origem)
+    nome_arquivo: Optional[str] = None  # nome do arquivo original (push) — chave pra identificar fonte
     criado_em: datetime
     class Config:
         from_attributes = True

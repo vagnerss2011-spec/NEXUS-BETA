@@ -81,6 +81,14 @@ async def lifespan(app: FastAPI):
             ALTER TABLE backups
             ADD COLUMN IF NOT EXISTS origem VARCHAR(16) NOT NULL DEFAULT 'manual'
         """))
+        # 1.3) backups.nome_arquivo — preserva nome do arquivo original recebido
+        # via push. Crítico para UNM2000 que envia 1 zip do banco próprio + N
+        # arquivos .cfg de OLTs distintas usando a mesma credencial FTP. NULL
+        # nas rows pré-migração e em backups SSH (que não vêm de arquivo).
+        await conn.execute(text("""
+            ALTER TABLE backups
+            ADD COLUMN IF NOT EXISTS nome_arquivo VARCHAR(255)
+        """))
         # 1.1) Garante que a constraint tenha ON DELETE SET NULL.
         # Em ambientes antigos a tabela foi criada via create_all SEM ondelete
         # no model, e o ADD COLUMN IF NOT EXISTS acima virou no-op porque a

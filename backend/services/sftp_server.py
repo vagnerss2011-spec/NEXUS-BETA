@@ -37,7 +37,10 @@ import paramiko
 from sqlalchemy import select
 from models import Device, Protocolo
 from services.crypto import decrypt
-from services.ftp_server import auth_log, _ip_match, MAX_FILE_SIZE
+from services.ftp_server import (
+    auth_log, _ip_match, MAX_FILE_SIZE,
+    _max_file_size_para, ler_arquivo_pra_persistir,
+)
 from services.push_backup import (
     SyncSessionLocal, processar_upload, auditar_acesso_negado,
 )
@@ -260,19 +263,27 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
             tamanho = os.path.getsize(real_path)
         except OSError:
             return
-        if tamanho == 0 or tamanho > MAX_FILE_SIZE:
-            log.warning("SFTP upload de %s rejeitado: tamanho=%s",
-                        self.ssh_server.username, tamanho)
+        if tamanho == 0:
+            log.warning("SFTP upload de %s rejeitado: tamanho=0",
+                        self.ssh_server.username)
             return
-        with open(real_path, "r", errors="replace") as f:
-            conteudo = f.read()
         with SyncSessionLocal() as db:
             dev = db.execute(
                 select(Device).where(Device.id == self.ssh_server.device_id)
             ).scalar_one_or_none()
             if not dev:
                 return
-            processar_upload(dev, conteudo, self.ssh_server.client_ip, tamanho, db)
+            limite = _max_file_size_para(dev)
+            if tamanho > limite:
+                log.warning("SFTP upload de %s rejeitado: tamanho=%s > limite=%s",
+                            self.ssh_server.username, tamanho, limite)
+                return
+            # Preserva o nome original que o cliente enviou — chave pra UNM2000
+            # diferenciar arquivos de OLTs distintas que chegam com mesma cred.
+            nome_arquivo = os.path.basename(real_path)
+            conteudo = ler_arquivo_pra_persistir(real_path, nome_arquivo)
+            processar_upload(dev, conteudo, self.ssh_server.client_ip, tamanho, db,
+                             nome_arquivo=nome_arquivo)
             db.commit()
 
     # Operações ainda negadas — SFTP é write-only do ponto de vista do cliente.

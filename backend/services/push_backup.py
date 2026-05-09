@@ -27,23 +27,35 @@ VOLUME_ALTO_LIMITE = 5  # uploads/24h que disparam alerta
 
 
 def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int,
-                     db: Session) -> None:
+                     db: Session, nome_arquivo: str | None = None) -> None:
     """Aplica dedupe diário + insert + retenção + audit + alerta de volume.
-    Caller responsabiliza pelo db.commit() (ou pode passar já em transação)."""
+    Caller responsabiliza pelo db.commit() (ou pode passar já em transação).
+
+    nome_arquivo: nome original do arquivo recebido. Crítico pra UNM2000 que
+    pode mandar múltiplos arquivos por dia (1 zip + N cfgs de OLTs distintas)
+    usando a mesma credencial FTP — sem o nome, perde-se a identificação.
+
+    Dedupe: pra devices que recebem só 1 arquivo/dia (OLT direto), substitui
+    o backup do dia. Pra UNM2000 (tipo='unm2000'), permite múltiplos arquivos
+    por dia (não dedupa) — cada arquivo é um backup distinto."""
     agora = datetime.now(timezone.utc)
     inicio_dia = agora.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Dedupe: substitui qualquer backup do device feito hoje
-    db.execute(
-        delete(Backup).where(
-            Backup.device_id == device.id,
-            Backup.criado_em >= inicio_dia,
+    # Dedupe diário só pra devices não-UNM2000. UNM2000 envia múltiplos arquivos
+    # distintos por dia (banco próprio + uma OLT cada arquivo) — dedupar
+    # apagaria os arquivos anteriores e perderia tudo menos o último.
+    if device.tipo is None or device.tipo.value != "unm2000":
+        db.execute(
+            delete(Backup).where(
+                Backup.device_id == device.id,
+                Backup.criado_em >= inicio_dia,
+            )
         )
-    )
 
     db.add(Backup(
         device_id=device.id, status="sucesso", conteudo=conteudo,
         erro=None, log_scheduler_id=None, origem="push",
+        nome_arquivo=nome_arquivo,
     ))
 
     # Retenção: mantém últimos N (BACKUP_RETENTION_DAYS), apaga o resto.

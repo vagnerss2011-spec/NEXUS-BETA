@@ -286,46 +286,101 @@ const PUSH_EXAMPLES = {
   tftp: TFTP_EXAMPLES,
 }
 
-// UNM2000 (NMS Fiberhome): a configuração é em UI clicada no EMS, não é comando
-// de terminal. Texto de instrução passo-a-passo, não um snippet copiável de CLI.
-// Validado contra UNM2000 V2R7+ (System Management → Maintenance → Set Backup
-// Server). Limite de senha = 20 chars no campo do EMS — backend gera 20 chars
-// quando tipo=unm2000 (vide _ftp_senha_len_para_tipo).
+// UNM2000 (NMS Fiberhome): São DOIS fluxos distintos no UNM2000, ambos podem
+// usar a MESMA credencial FTP gerada aqui. Validado contra os manuais oficiais
+// Fiberhome (Apr/2019, V2R7 era):
+//
+//  - DOC "Backup OLT": agenda backup das OLTs gerenciadas. Cliente Java →
+//    System → Parameter Settings → XFTP Server Setting + Policy Task
+//    Management → Configuration Export Task.
+//
+//  - DOC "Backup UNM": backup do banco do próprio UNM2000. Cliente Java →
+//    System → UNM Management Tool → abre browser :52302 → EMS Control &
+//    Monitor Tools → Import/Export → set backup server + set timer.
+//
+// O UNM2000 vai pushar então: 1 .zip/dia (banco do UNM) + N .cfg/dia (uma
+// por OLT). Backend preserva nome_arquivo pra distinguir (vide processar_upload).
+//
+// Os docs oficiais V2R7 mostram só FTP (porta 21) — SFTP pode existir em V3R20+
+// mas não confirmado. Default aqui = FTP. Senha limitada a 20 chars no campo
+// do EMS (backend gera 20 chars quando tipo=unm2000).
 const UNM2000_EXAMPLES = {
-  sftp: `# UNM2000 EMS — Set Backup Server (SFTP)
-# No cliente UNM2000, abra:
-#   Control and Monitor Tools → System Management → Maintenance →
-#   NE Configuration File Management → Set Backup Server
+  ftp: `# ========================================================================
+# UNM2000 (NMS Fiberhome) - Configuracao para enviar backups ao NEXUS
+# Usa a MESMA credencial FTP nos dois fluxos abaixo.
+# ========================================================================
 
-Protocolo:        SFTP
-IP/Host:          <SERVIDOR>
-Porta:            22
-Usuario:          <USUARIO>
-Senha:            <SENHA>     # max 20 caracteres (limite do EMS)
-Caminho remoto:   /
-Periodicidade:    Daily 03:00 (ou conforme politica)
+# ----- FLUXO 1: Backup das OLTs gerenciadas (config das OLTs) -----
+# Cliente Java do UNM2000:
 
-# Apos salvar, clique "Test Connection". Se conectar, agende o
-# Periodic Backup Task: NE Configuration File Management →
-#   Periodic Backup → selecione OLTs → Save.`,
+# 1.1) Cadastrar o servidor FTP destino:
+#      System -> Parameter Settings -> Service Configuration ->
+#      XFTP Server Setting -> Add
+Host Name:        NEXUS-BACKUP
+Host IP:          <SERVIDOR>
+Protocol Type:    FTP
+Username:         <USUARIO>
+Password:         <SENHA>      # max 20 caracteres
+Port Number:      21
+Path:             ./
+# -> clicar "Test XFTP" para validar; depois "Apply"
 
-  ftp: `# UNM2000 EMS — Set Backup Server (FTP)
-# No cliente UNM2000, abra:
-#   Control and Monitor Tools → System Management → Maintenance →
-#   NE Configuration File Management → Set Backup Server
+# 1.2) Agendar a tarefa de export:
+#      System -> Policy Task Management ->
+#      Configuration Export Task -> Create
+Task name:        BACKUP-DIARIO-OLT
+Enable:           [x]
+Task Type:        Every 1 day(s)
+Execution time:   03:00:00
+# Aba "Object source": marcar as OLTs a serem incluidas
+# Aba "Extend information": XFTP Server = NEXUS-BACKUP
+Repeated Time:    1
+# -> "OK". Para testar agora: selecione a tarefa e "Execute Now".
 
-Protocolo:        FTP
-IP/Host:          <SERVIDOR>
-Porta:            21
-Usuario:          <USUARIO>
-Senha:            <SENHA>     # max 20 caracteres (limite do EMS)
-Modo:             Passivo (PASV)
-Caminho remoto:   /
-Periodicidade:    Daily 03:00 (ou conforme politica)
 
-# FTP e plano (sem TLS). Se a rede entre UNM2000 e o NEXUS atravessa
-# Internet publica, prefira SFTP. Apos salvar, "Test Connection" e
-# agende o Periodic Backup Task.`,
+# ----- FLUXO 2: Backup do banco do proprio UNM2000 (.zip) -----
+# Acesso pelo browser na maquina UNM2000:
+
+# 2.1) Abrir UNM Management Tool (porta 52302 do servidor UNM):
+#      Cliente Java -> System -> UNM Management Tool
+#      OU direto:    http://<IP_DO_UNM2000>:52302/nmtool
+#      Login:        Admin / Admin (default - troque!)
+
+# 2.2) EMS Control & Monitor Tools -> Import/Export -> set backup server
+backup type:                       [x] local backup  [x] FTP backup
+local backup folder:               D:/unm2000/emsback   (default Windows)
+maximum number of local backup:    20
+ftp ip:                            <SERVIDOR>
+port:                              21
+ftp username:                      <USUARIO>
+ftp password:                      <SENHA>      # mesmas credenciais
+# -> "OK"
+
+# 2.3) (opcional) Ajustar horario: set timer
+enable timer:    yes
+interval time:   1 day
+execution time:  3 h 0 min        (03:00 padrao)
+
+# 2.4) Testar: clicar "export" -> "export success"
+# Arquivo gerado: YYYYMMDD_HHMMSS_allback.zip (~3 MB, formato binario)
+# O NEXUS armazena .zip em base64 no campo conteudo, com nome_arquivo
+# preservado para download/auditoria.`,
+
+  sftp: `# UNM2000 SFTP - Atencao: docs oficiais V2R7 (2019) so mostram FTP.
+# SFTP pode estar disponivel em V3R20+ no campo Protocol Type do XFTP
+# Server Setting. Se sua versao aceitar, troque "FTP" por "SFTP" e a
+# porta 21 por 22. O resto do fluxo e identico ao FTP — siga o mesmo
+# passo-a-passo do XFTP Server Setting + Configuration Export Task,
+# e tambem do Import/Export -> set backup server (se a interface web
+# da sua versao expuser opcao SFTP).
+
+Host IP:    <SERVIDOR>
+Protocolo:  SFTP
+Porta:      22
+Username:   <USUARIO>
+Password:   <SENHA>             # max 20 caracteres
+
+# Se o campo do EMS nao tiver opcao SFTP, use FTP (porta 21).`,
 }
 
 function montarExemploPush(protocolo, fabricante, servidor, usuario, senha, tipo) {
@@ -524,14 +579,18 @@ export default function Devices() {
     setMostrarSenha(false); setConfirmandoFab(false); setModal('new-ftp')
   }
   function openNewUnm2000() {
-    // UNM2000 sempre Fiberhome, sempre push. SFTP é o default; TFTP fica
-    // bloqueado (EMS não usa) e SSH não faz sentido (NMS não é polado).
+    // UNM2000 sempre Fiberhome, sempre push. FTP (porta 21) é o default
+    // porque os docs oficiais V2R7 (2019) só expõem FTP nos diálogos
+    // XFTP Server Setting e Set Backup Server. SFTP pode existir em
+    // versões mais recentes — se a UI do EMS aceitar, admin troca.
+    // TFTP fica bloqueado (EMS nunca usou) e SSH não faz sentido (NMS
+    // não é polado, é receptor).
     setForm({
       ...BLANK,
       tipo: 'unm2000',
       fabricante: 'fiberhome',
-      protocolo: 'sftp_push',
-      porta: DEFAULT_PORTS.sftp_push,
+      protocolo: 'ftp_push',
+      porta: DEFAULT_PORTS.ftp_push,
     })
     setMostrarSenha(false); setConfirmandoFab(false); setModal('new-ftp')
   }
