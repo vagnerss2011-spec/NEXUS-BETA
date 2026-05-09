@@ -4,7 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import AsyncSessionLocal
-from models import Device, Backup, Configuracao, LogScheduler
+from models import Device, Backup, Configuracao, LogScheduler, Protocolo
 from services.ssh_service import run_backup
 from services.telegram import enviar_alerta_async
 from config import settings
@@ -32,7 +32,18 @@ async def executar_backups():
         # Cada item: (device, erro_resumido, empresa_id)
         falhas_da_run: list[tuple[Device, str, int | None]] = []
         try:
-            result = await db.execute(select(Device).where(Device.ativo == True))
+            # Devices em modo push (ftp_push/sftp_push/tftp_push) se auto-enviam
+            # via servidor embutido. Não devem ser polados pelo scheduler — não
+            # têm credencial SSH cadastrada e geravam falso-positivo de "senha
+            # não cadastrada" no alerta Telegram.
+            result = await db.execute(
+                select(Device).where(
+                    Device.ativo == True,
+                    Device.protocolo.notin_((
+                        Protocolo.ftp_push, Protocolo.sftp_push, Protocolo.tftp_push,
+                    )),
+                )
+            )
             devices = result.scalars().all()
             total = len(devices)
 
