@@ -43,7 +43,7 @@ def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int
 
     db.add(Backup(
         device_id=device.id, status="sucesso", conteudo=conteudo,
-        erro=None, log_scheduler_id=None,
+        erro=None, log_scheduler_id=None, origem="push",
     ))
 
     # Retenção: mantém últimos N (BACKUP_RETENTION_DAYS), apaga o resto.

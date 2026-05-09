@@ -180,7 +180,8 @@ class BackupOut(BaseModel):
     status: str
     conteudo: Optional[str] = None
     erro: Optional[str] = None
-    log_scheduler_id: Optional[int] = None  # NULL = manual; preenchido = automático (scheduler)
+    log_scheduler_id: Optional[int] = None  # preenchido = scheduler do painel
+    origem: str = "manual"  # manual | scheduler | push (vide models.Backup.origem)
     criado_em: datetime
     class Config:
         from_attributes = True

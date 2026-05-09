@@ -68,6 +68,14 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS log_scheduler_id INTEGER
             REFERENCES log_scheduler(id) ON DELETE SET NULL
         """))
+        # 1.2) backups.origem — diferencia manual / scheduler / push.
+        # Default 'manual' cobre rows pré-migração que não tinham origem registrada
+        # (a UI antiga já mostrava elas como "Manual" baseada em log_scheduler_id IS NULL,
+        # então o default mantém compatibilidade visual pra histórico antigo).
+        await conn.execute(text("""
+            ALTER TABLE backups
+            ADD COLUMN IF NOT EXISTS origem VARCHAR(16) NOT NULL DEFAULT 'manual'
+        """))
         # 1.1) Garante que a constraint tenha ON DELETE SET NULL.
         # Em ambientes antigos a tabela foi criada via create_all SEM ondelete
         # no model, e o ADD COLUMN IF NOT EXISTS acima virou no-op porque a

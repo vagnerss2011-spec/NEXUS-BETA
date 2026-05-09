@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Folder, FolderOpen, ChevronRight, Router, AlertTriangle, Trash2, Clock, User } from 'lucide-react'
+import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Folder, FolderOpen, ChevronRight, Router, AlertTriangle, Trash2, Clock, User, Upload } from 'lucide-react'
 
 // Quando um backup novo tem tamanho < ALERTA_RATIO × tamanho do anterior bem-sucedido,
 // marca em laranja: pode indicar coleta truncada/corrompida (config crescer e diminuir
@@ -11,6 +11,38 @@ function formatarTamanho(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+// Diferencia 3 origens distintas para o usuário entender quem disparou o backup:
+//  - manual    → clicado pelo usuário no painel (botão "Testar agora")
+//  - scheduler → scheduler INTERNO do painel polando o device via SSH
+//  - push      → o EQUIPAMENTO mandou sozinho, via servidor embutido (FTP/SFTP/TFTP)
+//                — geralmente disparado por um scheduler configurado no próprio device
+// Fallback p/ rows antigas (pré-migração `origem`): usa log_scheduler_id como antes.
+function OrigemBadge({ backup }) {
+  const origem = backup.origem || (backup.log_scheduler_id ? 'scheduler' : 'manual')
+  if (origem === 'push') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs bg-emerald-500/15 text-emerald-300 px-2 py-0.5 rounded font-medium"
+        title="Backup enviado pelo próprio equipamento (FTP/SFTP/TFTP push) — disparado por um scheduler configurado no device.">
+        <Upload size={11} /> Push (device)
+      </span>
+    )
+  }
+  if (origem === 'scheduler') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs bg-sky-500/15 text-sky-300 px-2 py-0.5 rounded font-medium"
+        title={`Backup automático rodado pelo scheduler do painel via SSH${backup.log_scheduler_id ? ` (job #${backup.log_scheduler_id})` : ''}`}>
+        <Clock size={11} /> Auto (painel)
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-xs bg-violet-500/15 text-violet-300 px-2 py-0.5 rounded font-medium"
+      title="Backup disparado manualmente pelo painel (botão Testar)">
+      <User size={11} /> Manual
+    </span>
+  )
 }
 import api from '../services/api'
 import StatusBadge from '../components/StatusBadge'
@@ -279,17 +311,7 @@ export default function Backups() {
                               {new Date(b.criado_em).toLocaleString('pt-BR')}
                             </td>
                             <td className="px-5 py-3 whitespace-nowrap">
-                              {b.log_scheduler_id ? (
-                                <span className="inline-flex items-center gap-1 text-xs bg-sky-500/15 text-sky-300 px-2 py-0.5 rounded font-medium"
-                                  title={`Backup automático (job #${b.log_scheduler_id})`}>
-                                  <Clock size={11} /> Auto
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-xs bg-violet-500/15 text-violet-300 px-2 py-0.5 rounded font-medium"
-                                  title="Backup disparado manualmente pelo painel">
-                                  <User size={11} /> Manual
-                                </span>
-                              )}
+                              <OrigemBadge backup={b} />
                             </td>
                             <td className="px-5 py-3"><StatusBadge status={b.status} /></td>
                             <td className="px-5 py-3 text-xs whitespace-nowrap">

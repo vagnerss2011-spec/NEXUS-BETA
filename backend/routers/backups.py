@@ -73,6 +73,7 @@ async def executar_backup_manual(
         status=status,
         conteudo=conteudo if status == "sucesso" else None,
         erro=conteudo if status == "falha" else None,
+        origem="manual",
     )
     db.add(backup)
     await db.flush()

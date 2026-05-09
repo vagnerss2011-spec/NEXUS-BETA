@@ -128,6 +128,13 @@ class Backup(Base):
     status = Column(String(10), nullable=False)  # sucesso | falha
     conteudo = Column(Text, nullable=True)
     erro = Column(Text, nullable=True)
+    # Origem do backup — diferencia 3 fluxos distintos para UI/auditoria:
+    #  - manual:    botão "Testar agora" no painel (ação consciente do usuário)
+    #  - scheduler: scheduler interno do painel polando o device via SSH
+    #  - push:      o próprio equipamento enviou via servidor embutido (FTP/SFTP/TFTP),
+    #               geralmente disparado por um scheduler configurado no device.
+    # Default 'manual' cobre rows antigas (pré-migração) sem quebrar.
+    origem = Column(String(16), nullable=False, server_default="manual", default="manual")
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     device = relationship("Device", back_populates="backups")
 

@@ -129,6 +129,7 @@ async def _backup_device(db: AsyncSession, device: Device, log_id: int) -> tuple
             status=status,
             conteudo=conteudo if status == "sucesso" else None,
             erro=conteudo if status == "falha" else None,
+            origem="scheduler",
         )
         db.add(backup)
         await db.flush()
@@ -143,6 +144,7 @@ async def _backup_device(db: AsyncSession, device: Device, log_id: int) -> tuple
             log_scheduler_id=log_id,
             status="falha",
             erro=tb,
+            origem="scheduler",
         )
         db.add(backup)
         await db.flush()
