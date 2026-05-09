@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from database import get_db
-from models import Device, Empresa, User, UserRole, Backup, TipoAtividade, AuthMethod, Protocolo
+from models import Device, Empresa, User, UserRole, Backup, TipoAtividade, AuthMethod, Protocolo, DeviceTipo
 from auth import require_role, get_current_user, is_master, ensure_empresa_access
 from schemas import DeviceCreate, DeviceUpdate, DeviceOut, FTPCredentialOut
 from services.crypto import encrypt
@@ -90,10 +90,21 @@ def _gerar_ftp_user(device_id: int) -> str:
     return f"ftp_{device_id:05d}"
 
 
-def _gerar_ftp_senha() -> str:
-    """32 chars URL-safe. Sem caracteres ambíguos para facilitar copy/paste no equipamento."""
+def _ftp_senha_len_para_tipo(tipo: DeviceTipo | None) -> int:
+    """Tamanho da senha FTP gerada conforme o tipo do device.
+
+    UNM2000 (Fiberhome NMS) limita a senha em 20 chars no campo do EMS
+    Control and Monitor Tools → Set Backup Server. Demais devices usam 32.
+    """
+    return 20 if tipo == DeviceTipo.unm2000 else 32
+
+
+def _gerar_ftp_senha(comprimento: int = 32) -> str:
+    """N chars URL-safe (default 32). Sem caracteres ambíguos para facilitar
+    copy/paste no equipamento. Use _ftp_senha_len_para_tipo() para escolher
+    o comprimento conforme o tipo do device (UNM2000 tem limite de 20)."""
     alfabeto = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alfabeto) for _ in range(32))
+    return "".join(secrets.choice(alfabeto) for _ in range(comprimento))
 
 
 @router.post("/", response_model=DeviceOut,
@@ -117,6 +128,14 @@ async def criar_device(
     # FTP/SFTP geram credencial (user+senha); TFTP não tem auth.
     gera_credencial = data.protocolo in (Protocolo.ftp_push, Protocolo.sftp_push)
     is_tftp = data.protocolo == Protocolo.tftp_push
+
+    # UNM2000 é receptor passivo (EMS Set Backup Server) — só FTP/SFTP push.
+    # Bloqueia SSH/Telnet (não faz sentido polar um NMS) e TFTP (EMS não usa).
+    if data.tipo == DeviceTipo.unm2000 and data.protocolo not in (Protocolo.ftp_push, Protocolo.sftp_push):
+        raise HTTPException(
+            status_code=400,
+            detail="UNM2000 só aceita protocolo FTP push ou SFTP push (configurado no EMS Set Backup Server)",
+        )
 
     if is_push:
         if not data.ftp_origem_cidr:
@@ -165,7 +184,7 @@ async def criar_device(
     ftp_senha_plain: Optional[str] = None
     if gera_credencial:
         device.ftp_user = _gerar_ftp_user(device.id)
-        ftp_senha_plain = _gerar_ftp_senha()
+        ftp_senha_plain = _gerar_ftp_senha(_ftp_senha_len_para_tipo(device.tipo))
         device.ftp_senha_enc = encrypt(ftp_senha_plain)
         await db.commit()
         await db.refresh(device)
@@ -264,7 +283,7 @@ async def regenerar_credencial_ftp(
 
     if not device.ftp_user:
         device.ftp_user = _gerar_ftp_user(device.id)
-    nova_senha = _gerar_ftp_senha()
+    nova_senha = _gerar_ftp_senha(_ftp_senha_len_para_tipo(device.tipo))
     device.ftp_senha_enc = encrypt(nova_senha)
     await db.commit()
     return FTPCredentialOut(

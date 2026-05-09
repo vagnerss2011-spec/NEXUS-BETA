@@ -43,6 +43,11 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text(f"ALTER TYPE devicevendor ADD VALUE IF NOT EXISTS '{vendor}'"))
             except Exception:
                 pass
+        # Novo tipo: UNM2000 (NMS Fiberhome — recebe push backup do próprio EMS)
+        try:
+            await conn.execute(text("ALTER TYPE devicetipo ADD VALUE IF NOT EXISTS 'unm2000'"))
+        except Exception:
+            pass
         # Cria o enum authmethod (idempotente). NOT EXISTS no CREATE TYPE
         # ainda não existe no Postgres, então usamos DO $$ BEGIN ... END$$.
         try:

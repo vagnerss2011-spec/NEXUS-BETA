@@ -45,6 +45,12 @@ class DeviceTipo(str, enum.Enum):
     olt = "olt"
     switch = "switch"
     wireless = "wireless"
+    # NMS (Fiberhome UNM2000) — não é equipamento de rede físico, é um servidor
+    # gerenciador. Recebe push backup do próprio EMS (Control and Monitor Tools
+    # → Set Backup Server). UI separa em aba própria pois o fluxo é diferente:
+    # nunca é polado via SSH, só recebe via FTP/SFTP. Senha FTP limitada a 20
+    # chars por restrição do EMS.
+    unm2000 = "unm2000"
 
 class TipoAtividade(str, enum.Enum):
     login = "login"

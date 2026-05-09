@@ -25,6 +25,9 @@ const TIPOS = [
   { value: 'olt', label: 'OLT' },
   { value: 'switch', label: 'Switch' },
   { value: 'wireless', label: 'Wireless' },
+  // UNM2000: NMS Fiberhome — recebe push do EMS Set Backup Server. Aparece só
+  // na aba dedicada "UNM2000"; filtrado fora da listagem padrão de OLT/equip.
+  { value: 'unm2000', label: 'UNM2000 (NMS)' },
 ]
 const TIPO_LABEL = Object.fromEntries(TIPOS.map(t => [t.value, t.label]))
 const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '', ftp_origem_cidr: '' }
@@ -283,11 +286,60 @@ const PUSH_EXAMPLES = {
   tftp: TFTP_EXAMPLES,
 }
 
-function montarExemploPush(protocolo, fabricante, servidor, usuario, senha) {
+// UNM2000 (NMS Fiberhome): a configuração é em UI clicada no EMS, não é comando
+// de terminal. Texto de instrução passo-a-passo, não um snippet copiável de CLI.
+// Validado contra UNM2000 V2R7+ (System Management → Maintenance → Set Backup
+// Server). Limite de senha = 20 chars no campo do EMS — backend gera 20 chars
+// quando tipo=unm2000 (vide _ftp_senha_len_para_tipo).
+const UNM2000_EXAMPLES = {
+  sftp: `# UNM2000 EMS — Set Backup Server (SFTP)
+# No cliente UNM2000, abra:
+#   Control and Monitor Tools → System Management → Maintenance →
+#   NE Configuration File Management → Set Backup Server
+
+Protocolo:        SFTP
+IP/Host:          <SERVIDOR>
+Porta:            22
+Usuario:          <USUARIO>
+Senha:            <SENHA>     # max 20 caracteres (limite do EMS)
+Caminho remoto:   /
+Periodicidade:    Daily 03:00 (ou conforme politica)
+
+# Apos salvar, clique "Test Connection". Se conectar, agende o
+# Periodic Backup Task: NE Configuration File Management →
+#   Periodic Backup → selecione OLTs → Save.`,
+
+  ftp: `# UNM2000 EMS — Set Backup Server (FTP)
+# No cliente UNM2000, abra:
+#   Control and Monitor Tools → System Management → Maintenance →
+#   NE Configuration File Management → Set Backup Server
+
+Protocolo:        FTP
+IP/Host:          <SERVIDOR>
+Porta:            21
+Usuario:          <USUARIO>
+Senha:            <SENHA>     # max 20 caracteres (limite do EMS)
+Modo:             Passivo (PASV)
+Caminho remoto:   /
+Periodicidade:    Daily 03:00 (ou conforme politica)
+
+# FTP e plano (sem TLS). Se a rede entre UNM2000 e o NEXUS atravessa
+# Internet publica, prefira SFTP. Apos salvar, "Test Connection" e
+# agende o Periodic Backup Task.`,
+}
+
+function montarExemploPush(protocolo, fabricante, servidor, usuario, senha, tipo) {
   // protocolo: 'ftp_push' | 'sftp_push' | 'tftp_push'
+  // tipo: opcional — quando 'unm2000', usa UNM2000_EXAMPLES (instrucoes do EMS,
+  //                  nao snippet de CLI). Demais tipos seguem por fabricante.
   const proto = protocolo === 'sftp_push' ? 'sftp' : protocolo === 'tftp_push' ? 'tftp' : 'ftp'
-  const examples = PUSH_EXAMPLES[proto] || PUSH_EXAMPLES.ftp
-  const tpl = examples[fabricante] || examples.outro
+  let tpl
+  if (tipo === 'unm2000') {
+    tpl = UNM2000_EXAMPLES[proto] || UNM2000_EXAMPLES.sftp
+  } else {
+    const examples = PUSH_EXAMPLES[proto] || PUSH_EXAMPLES.ftp
+    tpl = examples[fabricante] || examples.outro
+  }
   return tpl
     .replaceAll('<SERVIDOR>', servidor || '<SERVIDOR>')
     .replaceAll('<USUARIO>', usuario || '<USUARIO>')
@@ -411,6 +463,9 @@ export default function Devices() {
   const [filtroFabricante, setFiltroFabricante] = useState('todos')
   const [filtroTipo, setFiltroTipo] = useState('todos')
   const [filtroStatus, setFiltroStatus] = useState('todos')
+  // Separa visualmente OLT/equipamentos de NMS UNM2000 — mesmos models, fluxos
+  // diferentes (UNM2000 é receptor, sempre push, senha 20 chars). 'olt' é default.
+  const [aba, setAba] = useState('olt')
   const user = JSON.parse(localStorage.getItem('user') || '{}')
   const empresa = getCurrentEmpresa()
   const canEdit = ['admin', 'admin_empresa', 'operador'].includes(user.role)
@@ -421,9 +476,16 @@ export default function Devices() {
     return Array.from(set).sort()
   }, [devices])
 
+  // Particiona por aba antes dos outros filtros — UNM2000 fica isolado da
+  // listagem de OLT/equipamentos pra não poluir contadores nem misturar UX.
+  const devicesPorAba = useMemo(() => {
+    if (aba === 'unm2000') return devices.filter(d => d.tipo === 'unm2000')
+    return devices.filter(d => d.tipo !== 'unm2000')
+  }, [devices, aba])
+
   const devicesFiltrados = useMemo(() => {
     const termo = busca.trim().toLowerCase()
-    return devices.filter(d => {
+    return devicesPorAba.filter(d => {
       if (termo) {
         const alvo = `${d.nome || ''} ${d.ip || ''} ${formatDeviceId(d.id)}`.toLowerCase()
         if (!alvo.includes(termo)) return false
@@ -436,7 +498,7 @@ export default function Devices() {
       }
       return true
     })
-  }, [devices, busca, filtroFabricante, filtroTipo, filtroStatus])
+  }, [devicesPorAba, busca, filtroFabricante, filtroTipo, filtroStatus])
 
   const filtroAtivo = busca.trim() !== '' || filtroFabricante !== 'todos' || filtroTipo !== 'todos' || filtroStatus !== 'todos'
 
@@ -459,6 +521,18 @@ export default function Devices() {
     // SFTP é o default recomendado (criptografado). Admin troca se equipamento
     // não suportar SFTP, caindo pra FTP ou TFTP.
     setForm({ ...BLANK, protocolo: 'sftp_push', porta: DEFAULT_PORTS.sftp_push })
+    setMostrarSenha(false); setConfirmandoFab(false); setModal('new-ftp')
+  }
+  function openNewUnm2000() {
+    // UNM2000 sempre Fiberhome, sempre push. SFTP é o default; TFTP fica
+    // bloqueado (EMS não usa) e SSH não faz sentido (NMS não é polado).
+    setForm({
+      ...BLANK,
+      tipo: 'unm2000',
+      fabricante: 'fiberhome',
+      protocolo: 'sftp_push',
+      porta: DEFAULT_PORTS.sftp_push,
+    })
     setMostrarSenha(false); setConfirmandoFab(false); setModal('new-ftp')
   }
   function openEdit(d) {
@@ -518,6 +592,7 @@ export default function Devices() {
         setCredencialFtp({
           nome: resp.data.nome,
           fabricante: resp.data.fabricante,
+          tipo: resp.data.tipo,  // necessário pra UNM2000 mostrar exemplo do EMS no modal
           protocolo: resp.data.protocolo,
           ftp_user: resp.data.ftp_user,
           ftp_senha: resp.data.ftp_senha,
@@ -537,6 +612,7 @@ export default function Devices() {
       setCredencialFtp({
         nome: d.nome,
         fabricante: d.fabricante,
+        tipo: d.tipo,  // necessário pra UNM2000 mostrar exemplo do EMS no modal
         protocolo: d.protocolo,
         ftp_user: data.ftp_user,
         ftp_senha: data.ftp_senha,
@@ -569,27 +645,63 @@ export default function Devices() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dispositivos</h1>
+          <h1 className="text-2xl font-bold text-white">
+            {aba === 'unm2000' ? 'UNM2000 (NMS Fiberhome)' : 'Dispositivos'}
+          </h1>
           <p className="text-slate-400 text-sm mt-1">
             {filtroAtivo
-              ? `${devicesFiltrados.length} de ${devices.length} equipamento(s)`
-              : `${devices.length} equipamento(s) cadastrado(s)`}
+              ? `${devicesFiltrados.length} de ${devicesPorAba.length} ${aba === 'unm2000' ? 'NMS' : 'equipamento(s)'}`
+              : `${devicesPorAba.length} ${aba === 'unm2000' ? 'NMS cadastrado(s)' : 'equipamento(s) cadastrado(s)'}`}
           </p>
         </div>
         {canEdit && (
           <div className="flex items-center gap-2 flex-wrap">
-            <button onClick={openNewFtp}
-              title="Cadastrar dispositivo cujo backup chega via push (FTP, SFTP ou TFTP)"
-              className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
-              <Upload size={16} /> Novo via Upload
-            </button>
-            <button onClick={openNew}
-              title="Cadastrar dispositivo coletado por SSH ou Telnet"
-              className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
-              <Plus size={16} /> Novo Dispositivo
-            </button>
+            {aba === 'olt' ? (
+              <>
+                <button onClick={openNewFtp}
+                  title="Cadastrar dispositivo cujo backup chega via push (FTP, SFTP ou TFTP)"
+                  className="flex items-center gap-2 bg-violet-500 hover:bg-violet-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
+                  <Upload size={16} /> Novo via Upload
+                </button>
+                <button onClick={openNew}
+                  title="Cadastrar dispositivo coletado por SSH ou Telnet"
+                  className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
+                  <Plus size={16} /> Novo Dispositivo
+                </button>
+              </>
+            ) : (
+              <button onClick={openNewUnm2000}
+                title="Cadastrar instância UNM2000 — gera credencial pra colar no EMS Set Backup Server"
+                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-1 sm:flex-none justify-center">
+                <Plus size={16} /> Novo UNM2000
+              </button>
+            )}
           </div>
         )}
+      </div>
+
+      {/* Tabs OLT vs UNM2000 — separa fluxos completamente diferentes na UX */}
+      <div className="flex border-b border-slate-700 -mb-2">
+        <button
+          onClick={() => setAba('olt')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            aba === 'olt'
+              ? 'text-sky-300 border-sky-400'
+              : 'text-slate-400 border-transparent hover:text-slate-200'
+          }`}
+        >
+          OLT / Equipamentos
+        </button>
+        <button
+          onClick={() => setAba('unm2000')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            aba === 'unm2000'
+              ? 'text-emerald-300 border-emerald-400'
+              : 'text-slate-400 border-transparent hover:text-slate-200'
+          }`}
+        >
+          UNM2000 (NMS)
+        </button>
       </div>
 
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-3">
@@ -870,6 +982,7 @@ export default function Devices() {
                         IP_SERVIDOR_BACKUP,
                         credencialFtp.ftp_user,
                         credencialFtp.ftp_senha,
+                        credencialFtp.tipo,
                       ))}
                       title="Copiar comando completo"
                       className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
@@ -884,6 +997,7 @@ export default function Devices() {
                       IP_SERVIDOR_BACKUP,
                       credencialFtp.ftp_user,
                       credencialFtp.ftp_senha,
+                      credencialFtp.tipo,
                     )}
                   </pre>
                 </div>
@@ -929,7 +1043,9 @@ export default function Devices() {
               <div className="flex items-center gap-3">
                 <h2 className="font-semibold text-white">
                   {modal === 'new' ? 'Novo Dispositivo'
+                    : modal === 'new-ftp' && form.tipo === 'unm2000' ? 'Novo UNM2000 (NMS Fiberhome)'
                     : modal === 'new-ftp' ? 'Novo Dispositivo via Upload'
+                    : form.tipo === 'unm2000' ? 'Editar UNM2000'
                     : 'Editar Dispositivo'}
                 </h2>
                 {modal !== 'new' && typeof modal === 'number' && (
@@ -976,8 +1092,11 @@ export default function Devices() {
                   </div>
                   <div>
                     <label className="block text-sm text-slate-400 mb-1.5">Protocolo de upload</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {PUSH_PROTOCOLS.map(p => {
+                    <div className={`grid gap-2 ${form.tipo === 'unm2000' ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                      {PUSH_PROTOCOLS
+                        // UNM2000 não usa TFTP — EMS Set Backup Server só FTP/SFTP
+                        .filter(p => form.tipo !== 'unm2000' || p !== 'tftp_push')
+                        .map(p => {
                         const info = PUSH_PROTO_INFO[p]
                         const ativo = form.protocolo === p
                         return (
@@ -1008,6 +1127,12 @@ export default function Devices() {
                     <p className="text-xs text-slate-500 mt-1.5">
                       {PUSH_PROTO_INFO[form.protocolo]?.desc}
                     </p>
+                    {form.tipo === 'unm2000' && (
+                      <p className="text-xs text-emerald-300/80 mt-1.5 flex items-start gap-1">
+                        <span>ℹ</span>
+                        <span>UNM2000: a senha gerada terá <strong>20 caracteres</strong> (limite do campo no EMS Set Backup Server). TFTP não é suportado pelo EMS.</span>
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm text-slate-400 mb-1.5">
@@ -1038,7 +1163,7 @@ export default function Devices() {
                       </label>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP))}
+                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP, undefined, undefined, form.tipo))}
                         title="Copiar comando"
                         className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
                       >
@@ -1046,7 +1171,7 @@ export default function Devices() {
                       </button>
                     </div>
                     <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
-                      {montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP)}
+                      {montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP, undefined, undefined, form.tipo)}
                     </pre>
                     <p className="text-xs text-slate-500 mt-1">
                       {form.protocolo === 'tftp_push'
