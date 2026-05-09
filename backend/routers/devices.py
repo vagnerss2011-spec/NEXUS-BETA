@@ -86,7 +86,18 @@ def _validar_cidr_ou_400(cidr: str, exigir_host: bool = False) -> None:
         raise HTTPException(status_code=400, detail=f"ftp_origem_cidr inválido: {e}")
 
 
-def _gerar_ftp_user(device_id: int) -> str:
+def _gerar_ftp_user(device_id: int, tipo: DeviceTipo | None = None) -> str:
+    """Username FTP/SFTP do device.
+
+    UNM2000 (Fiberhome NMS): SEM caracteres especiais — o EMS Set Backup
+    Server e o XFTP Server Setting rejeitam '_', '-' e similares no campo
+    Username. Usamos só letras+dígitos: 'ftp00012'.
+
+    Demais devices (OLT/switch/roteador): formato histórico 'ftp_00012'
+    com underscore — clientes FTP genéricos aceitam normalmente.
+    """
+    if tipo == DeviceTipo.unm2000:
+        return f"ftp{device_id:05d}"
     return f"ftp_{device_id:05d}"
 
 
@@ -100,9 +111,11 @@ def _ftp_senha_len_para_tipo(tipo: DeviceTipo | None) -> int:
 
 
 def _gerar_ftp_senha(comprimento: int = 32) -> str:
-    """N chars URL-safe (default 32). Sem caracteres ambíguos para facilitar
-    copy/paste no equipamento. Use _ftp_senha_len_para_tipo() para escolher
-    o comprimento conforme o tipo do device (UNM2000 tem limite de 20)."""
+    """N chars de [a-zA-Z0-9] (default 32). Sem caracteres especiais — o EMS
+    do UNM2000 rejeita '_', '-', '/' e outros símbolos no campo Password,
+    e clientes FTP de equipamentos diversos têm comportamentos imprevisíveis
+    com chars de escape. Alfanumérico puro funciona em 100% dos cenários.
+    Use _ftp_senha_len_para_tipo() pra escolher o comprimento (UNM2000=20)."""
     alfabeto = string.ascii_letters + string.digits
     return "".join(secrets.choice(alfabeto) for _ in range(comprimento))
 
@@ -183,7 +196,7 @@ async def criar_device(
     # (protocolo é anonymous — id do device é o IP de origem).
     ftp_senha_plain: Optional[str] = None
     if gera_credencial:
-        device.ftp_user = _gerar_ftp_user(device.id)
+        device.ftp_user = _gerar_ftp_user(device.id, device.tipo)
         ftp_senha_plain = _gerar_ftp_senha(_ftp_senha_len_para_tipo(device.tipo))
         device.ftp_senha_enc = encrypt(ftp_senha_plain)
         await db.commit()
@@ -281,8 +294,13 @@ async def regenerar_credencial_ftp(
     if device.protocolo not in (Protocolo.ftp_push, Protocolo.sftp_push):
         raise HTTPException(status_code=400, detail="Esse dispositivo não usa FTP/SFTP push (TFTP não tem credencial)")
 
-    if not device.ftp_user:
-        device.ftp_user = _gerar_ftp_user(device.id)
+    # Caso 1 (sem ftp_user): cadastra agora.
+    # Caso 2 (UNM2000 com user antigo 'ftp_xxxxx' c/ underscore): atualiza pro
+    # formato sem underscore que o EMS aceita. Permite consertar devices
+    # cadastrados antes do fix sem precisar deletar/recriar.
+    user_correto = _gerar_ftp_user(device.id, device.tipo)
+    if not device.ftp_user or device.ftp_user != user_correto:
+        device.ftp_user = user_correto
     nova_senha = _gerar_ftp_senha(_ftp_senha_len_para_tipo(device.tipo))
     device.ftp_senha_enc = encrypt(nova_senha)
     await db.commit()
