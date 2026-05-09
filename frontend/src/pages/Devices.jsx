@@ -721,9 +721,13 @@ export default function Devices() {
           className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
         >
           <option value="todos">Todos os tipos</option>
-          {TIPOS.map(t => (
-            <option key={t.value} value={t.value}>{t.label}</option>
-          ))}
+          {TIPOS
+            // Aba OLT esconde UNM2000 do filtro (devicesPorAba já exclui),
+            // aba UNM2000 esconde os tipos de equipamento.
+            .filter(t => aba === 'unm2000' ? t.value === 'unm2000' : t.value !== 'unm2000')
+            .map(t => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
         </select>
         <select
           value={filtroFabricante}
@@ -1311,29 +1315,45 @@ export default function Devices() {
                 <select
                   value={form.tipo || 'roteador'}
                   onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}
-                  disabled={!!FABRICANTE_TIPO_FIXO[form.fabricante]}
+                  disabled={!!FABRICANTE_TIPO_FIXO[form.fabricante] || form.tipo === 'unm2000'}
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {TIPOS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  {TIPOS
+                    // UNM2000 é cadastrado pela aba dedicada — não aparece como
+                    // opção no fluxo de OLT/equip, evitando configuração mista
+                    // (ex.: OLT marcada como tipo=unm2000 sem querer).
+                    .filter(t => form.tipo === 'unm2000' ? t.value === 'unm2000' : t.value !== 'unm2000')
+                    .map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Fabricante</label>
-                <select
-                  value={form.fabricante}
-                  onChange={e => {
-                    const fab = e.target.value
-                    setForm(f => ({
-                      ...f,
-                      fabricante: fab,
-                      // Auto-ajusta o tipo quando o fabricante restringe
-                      tipo: FABRICANTE_TIPO_FIXO[fab] || f.tipo,
-                    }))
-                  }}
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
-                >
-                  {FABRICANTES.map(f => <option key={f} value={f} className="capitalize">{labelFabricante(f)}</option>)}
-                </select>
+                {form.tipo === 'unm2000' ? (
+                  // UNM2000 só existe no ecossistema Fiberhome — não tem por que
+                  // mostrar select. Quando entrar suporte a outros NMS (Nokia 5520
+                  // AMS, Huawei iMaster NCE, etc.) vira um select filtrado pelos
+                  // fabricantes que têm produto NMS.
+                  <div className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm flex items-center justify-between">
+                    <span className="capitalize">Fiberhome</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider">UNM2000 só existe na Fiberhome</span>
+                  </div>
+                ) : (
+                  <select
+                    value={form.fabricante}
+                    onChange={e => {
+                      const fab = e.target.value
+                      setForm(f => ({
+                        ...f,
+                        fabricante: fab,
+                        // Auto-ajusta o tipo quando o fabricante restringe
+                        tipo: FABRICANTE_TIPO_FIXO[fab] || f.tipo,
+                      }))
+                    }}
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
+                  >
+                    {FABRICANTES.map(f => <option key={f} value={f} className="capitalize">{labelFabricante(f)}</option>)}
+                  </select>
+                )}
               </div>
               {modal !== 'new-ftp' && (
               <div>
