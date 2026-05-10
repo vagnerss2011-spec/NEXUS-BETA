@@ -11,6 +11,15 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.9
 netmiko==4.4.0
+# Paramiko (dep transitiva de netmiko) pinada na 4.0.0 explicitamente.
+# A 5.0.0 (default que o pip pega sem pin) REMOVE algoritmos KEX legados
+# (group14-sha1, group1-sha1) que OLTs antigas (Huawei MA5800/MA5680T,
+# ZTE C320, etc.) ainda usam por default. Sem esses algos, server-side em
+# paramiko 5 dá `IncompatiblePeer: no acceptable kex algorithm`.
+# A 4.0 manteve os algos via _kex_info (filtrado runtime em sftp_server.py
+# `_aplicar_compat_legacy`). Validado: Huawei MA5800 (2026-04-27) e
+# ZTE C320 (2026-05-10).
+paramiko==4.0.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 cryptography==42.0.7

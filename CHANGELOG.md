@@ -12,6 +12,18 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.2] - 2026-05-10
+
+### Corrigido
+
+- **`paramiko==4.0.0` pinada explicitamente** no `requirements.txt`. Antes vinha como dep transitiva do `netmiko` sem pin, e o `paramiko 5.0.0` (default no pip atual) **remove** os algoritmos KEX legados (`diffie-hellman-group14-sha1`, `diffie-hellman-group1-sha1`) que OLTs antigas (Huawei MA5800/MA5680T, ZTE C320, etc.) ainda oferecem por default. Sintoma: SFTP push falhava em rebuild fresh com `paramiko.ssh_exception.IncompatiblePeer: no acceptable kex algorithm`. Em servidores antigos (já buildados antes do upgrade do paramiko 5) funcionava — o bug só aparecia em instalações novas.
+- O `_aplicar_compat_legacy` em `sftp_server.py` já tinha esses algos no `desired_kex`, mas filtrava pelo `_kex_info` em runtime — em paramiko 5 essa lista vinha vazia, e o resultado da intersecção era um set sem KEX comum com o equipamento.
+
+### Sabidos
+
+- Pin em paramiko 4.0 mantém algoritmos legados disponíveis (`group14-sha1`, etc.) por escolha consciente — equipamento de cliente em VRP/ZTE legacy depende deles. Não é "vulnerabilidade", é compatibilidade obrigatória.
+- Quando paramiko 4.x sair de manutenção (provável 2027+), reavaliar: implementar GEX-sha1 na mão, ou rodar bridge legacy em container separado.
+
 ## [1.2.1] - 2026-05-10
 
 ### Corrigido
@@ -163,7 +175,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.1...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.1...v1.1.2
