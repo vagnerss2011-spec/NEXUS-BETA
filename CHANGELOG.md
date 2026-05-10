@@ -10,7 +10,10 @@ Política de bump:
 
 ## [Não lançado]
 
-_(linhas que vão entrar na próxima tag)_
+### Adicionado
+
+- `scripts/install-nexus-backup.sh` — bootstrap idempotente pra Debian 13 (Trixie). Configura locale/timezone, Docker (repo oficial + daemon.json com bip/pools), chrony (allow + ratelimit), fail2ban (action docker-allports + filter+jail nexus-ftp), UFW, clona o repo na tag mais recente, gera `.env` com secrets aleatórios. Não toca em SSH (deixa pro operador via console). Suporta flag `--interactive` que apresenta cada um dos 8 passos com descrição + por quê e pede confirmação ([s]im/[n]ão/[a]ll/[q]uit).
+- `docs/INSTALL.md` — runbook ponta-a-ponta pra provisionar nova instância (Proxmox VM Debian 13 → mover SSH pra 2288 → script bootstrap → editar `.env` → certbot → compose up → criar admin → validar). Inclui troubleshooting e diferenças vs. servidor Debian 12 antigo.
 
 ## [1.0.0] - 2026-05-10
 
