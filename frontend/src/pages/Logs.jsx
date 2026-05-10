@@ -147,6 +147,32 @@ export default function Logs() {
     }
   }
 
+  async function deletarPush(atv, ev) {
+    ev?.stopPropagation()
+    const quando = new Date(atv.criado_em).toLocaleString('pt-BR')
+    const alvo = atv.alvo_nome ? ` de ${atv.alvo_nome}` : ''
+    if (!confirm(`Excluir este evento de push${alvo} (${quando})?`)) return
+    try {
+      await api.delete(`/atividades/${atv.id}`)
+      load()
+    } catch {
+      alert('Falha ao excluir o evento.')
+    }
+  }
+
+  async function deletarTodosPush() {
+    if (!confirm('Excluir TODOS os eventos de push (FTP/SFTP/TFTP)?\n\nInclui sucessos, falhas, acessos negados e alertas de volume alto. Esta ação não pode ser desfeita.\nOs backups recebidos permanecem — só os logs são removidos.')) return
+    try {
+      const r = await api.delete(`/atividades/?tipos=${PUSH_TIPOS.join(',')}`)
+      load()
+      if (r.data?.removidos > 0) {
+        // Feedback discreto (sem alert) — load() já mostra a tabela vazia/atualizada
+      }
+    } catch {
+      alert('Falha ao excluir os eventos de push.')
+    }
+  }
+
   // Aplica o filtro de aba (all / scheduler / push) na lista mesclada.
   const eventosFiltrados = eventos.filter(e => filtro === 'all' || e.source === filtro)
 
@@ -166,6 +192,12 @@ export default function Logs() {
             <button onClick={deletarTodos}
               className="flex items-center justify-center gap-2 text-red-400 hover:text-red-300 border border-red-500/40 hover:border-red-500/70 px-3 py-2 rounded-lg text-sm transition-colors flex-1 sm:flex-none">
               <Trash2 size={15} /> Excluir logs scheduler
+            </button>
+          )}
+          {canDelete && totalPush > 0 && (
+            <button onClick={deletarTodosPush}
+              className="flex items-center justify-center gap-2 text-red-400 hover:text-red-300 border border-red-500/40 hover:border-red-500/70 px-3 py-2 rounded-lg text-sm transition-colors flex-1 sm:flex-none">
+              <Trash2 size={15} /> Excluir logs push
             </button>
           )}
           <button onClick={load} disabled={loading}
@@ -231,7 +263,7 @@ export default function Logs() {
             )}
             {eventosFiltrados.map((e, i) => e.source === 'scheduler'
               ? <SchedulerRow key={`s-${e.log.id}`} log={e.log} onOpen={abrirDetalhe} canDelete={canDelete} onDelete={deletarLog} mostrarEmpresa={mostrarEmpresa} />
-              : <PushRow key={`p-${e.atv.id}`} atv={e.atv} mostrarEmpresa={mostrarEmpresa} />
+              : <PushRow key={`p-${e.atv.id}`} atv={e.atv} canDelete={canDelete} onDelete={deletarPush} mostrarEmpresa={mostrarEmpresa} />
             )}
           </tbody>
         </table>
@@ -307,7 +339,7 @@ function SchedulerRow({ log, onOpen, canDelete, onDelete, mostrarEmpresa }) {
 }
 
 // ─────────────────── Linha de evento Push ───────────────────
-function PushRow({ atv, mostrarEmpresa }) {
+function PushRow({ atv, canDelete, onDelete, mostrarEmpresa }) {
   const { protocolo, motivo, arquivo } = parsePushDetalhe(atv.detalhe)
   const { Icon, color, label, cls } = pushStatusBadge(atv.tipo)
 
@@ -357,8 +389,14 @@ function PushRow({ atv, mostrarEmpresa }) {
         </td>
       )}
       <td className="px-4 py-3">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center gap-1 justify-end">
           <span className={`text-[10px] px-2 py-0.5 rounded border ${cls}`}>{atv.tipo}</span>
+          {canDelete && (
+            <button onClick={(ev) => onDelete(atv, ev)} title="Excluir este evento"
+                    className="p-1.5 text-red-400 hover:bg-red-500/20 rounded transition-colors">
+              <Trash2 size={15} />
+            </button>
+          )}
         </div>
       </td>
     </tr>

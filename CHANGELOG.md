@@ -12,6 +12,13 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.1.1] - 2026-05-10
+
+### Adicionado
+
+- Excluir eventos de push manualmente na página Logs: trash em cada linha de push (igual scheduler) + botão "Excluir logs push" no header (mass delete só dos tipos push, preserva backups recebidos). admin_empresa só apaga eventos da própria empresa; eventos com `empresa_id` NULL (auth fail antes de identificar device) ficam restritos ao admin master.
+- `DELETE /api/atividades/{id}` (single) e `DELETE /api/atividades/?tipos=...&empresa_id=...` (mass com filtros). Sem filtros explícitos, mass delete restringe automaticamente ao escopo do user (admin_empresa nunca apaga fora da própria empresa).
+
 ## [1.1.0] - 2026-05-10
 
 ### Adicionado
@@ -101,6 +108,7 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.0...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/releases/tag/v1.0.0
