@@ -103,10 +103,17 @@ export default function Backups() {
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const nome = b.device?.nome?.replace(/\s+/g, '_') ?? `device_${b.device_id}`
-    const data = new Date(b.criado_em).toISOString().slice(0, 10)
+    // Preserva nome_arquivo original quando o backup veio de push (UNM2000
+    // .zip precisa chegar como .zip). Fallback pra padrão antigo quando o
+    // backup é texto sem nome_arquivo (manual / scheduler tradicional).
+    if (b.nome_arquivo) {
+      a.download = b.nome_arquivo
+    } else {
+      const nome = b.device?.nome?.replace(/\s+/g, '_') ?? `device_${b.device_id}`
+      const data = new Date(b.criado_em).toISOString().slice(0, 10)
+      a.download = `backup_${nome}_${data}.txt`
+    }
     a.href = url
-    a.download = `backup_${nome}_${data}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }

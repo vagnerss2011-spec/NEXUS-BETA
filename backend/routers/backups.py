@@ -126,7 +126,17 @@ async def download_backup(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    from fastapi.responses import PlainTextResponse
+    """Download do backup. Comportamento:
+
+    - Conteúdo binário (push de .zip/.gz/.tar etc, prefixo 'BASE64:'): decodifica
+      e retorna como octet-stream. Filename = nome_arquivo original (preserva
+      extensão pro browser/SO reconhecerem corretamente — UNM2000 manda .zip
+      e não pode chegar como .txt).
+    - Conteúdo texto (configs CLI normais): retorna como texto. Filename usa
+      nome_arquivo se disponível, senão fallback histórico backup_<id>.txt.
+    """
+    import base64
+    from fastapi.responses import PlainTextResponse, Response
     result = await db.execute(
         select(Backup).options(selectinload(Backup.device)).where(Backup.id == backup_id)
     )
@@ -134,5 +144,18 @@ async def download_backup(
     if not backup or not backup.conteudo:
         raise HTTPException(status_code=404, detail="Backup não encontrado")
     ensure_empresa_access(user, backup.device.empresa_id)
-    return PlainTextResponse(content=backup.conteudo, media_type="text/plain",
-                             headers={"Content-Disposition": f"attachment; filename=backup_{backup_id}.txt"})
+
+    nome = backup.nome_arquivo or f"backup_{backup_id}.txt"
+    # Aspas duplas no filename pra cobrir nomes com espaços/caracteres especiais.
+    disp = f'attachment; filename="{nome}"'
+
+    if backup.conteudo.startswith("BASE64:"):
+        try:
+            raw = base64.b64decode(backup.conteudo[7:])
+        except Exception:
+            raise HTTPException(status_code=500, detail="Conteúdo binário corrompido")
+        return Response(content=raw, media_type="application/octet-stream",
+                        headers={"Content-Disposition": disp})
+
+    return PlainTextResponse(content=backup.conteudo, media_type="text/plain; charset=utf-8",
+                             headers={"Content-Disposition": disp})
