@@ -12,6 +12,16 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.3] - 2026-05-10
+
+### Corrigido
+
+- **SFTP: arquivos órfãos quando cliente fecha sessão sem `SSH_FXP_CLOSE`** — alguns clientes (validado: ZTE ZXA10 C320 com `file-server manual-backup cfg ... sftp`) escrevem o arquivo completo no disco mas fecham a conexão SSH abruptamente sem enviar `SSH_FXP_CLOSE` no handle SFTP. Resultado: `NexusSFTPHandle.close()` nunca era chamado, `processar_upload_local` não rodava, e o arquivo ficava órfão em `infra/sftp-uploads/<user>/.../arquivo` sem chegar ao banco. Adicionado hook `NexusSFTPServerInterface.session_ended()` que processa qualquer arquivo "dirty" (aberto pra escrita nesta sessão) que ainda existe no disco quando o subsystem SFTP termina. Idempotente: em fluxo normal (cliente envia CLOSE), o handle.close() já processou e deletou — session_ended encontra disco vazio e pula.
+
+### Adicionado
+
+- Exemplo SFTP push pra **ZTE ZXA10 (C300/C320/C600)** no painel — sintaxe `file-server manual-backup cfg server-index 1 ipaddress <SERVIDOR> sftp path <nome> user <USUARIO> password <SENHA>` + comando `show auto-backup progress manual` pra acompanhar. Antes o painel só tinha exemplo pra ZXR10 (switch/router), e usuários adaptavam pra OLT sem `path` correto.
+
 ## [1.2.2] - 2026-05-10
 
 ### Corrigido
@@ -175,7 +185,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.2...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.2...v1.2.0

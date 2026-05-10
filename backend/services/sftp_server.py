@@ -192,6 +192,12 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
     def __init__(self, server, *args, **kwargs):
         super().__init__(server, *args, **kwargs)
         self.ssh_server: NexusSSHServerInterface = server
+        # Files que foram abertos pra escrita nesta sessão. Usado por
+        # session_ended() pra processar uploads quando o cliente fecha a
+        # conexão SSH abruptamente sem enviar SSH_FXP_CLOSE — caso típico
+        # de ZTE C320 com `file-server manual-backup`. Sem esse fallback,
+        # o file fica órfão no disco e nunca chega no banco.
+        self._dirty_files: set[str] = set()
 
     def _homedir(self) -> str:
         d = self.ssh_server.homedir()
@@ -228,10 +234,45 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
         if real is None:
             return paramiko.SFTP_PERMISSION_DENIED
         try:
-            return NexusSFTPHandle(self, real, flags)
+            handle = NexusSFTPHandle(self, real, flags)
+            self._dirty_files.add(real)
+            return handle
         except Exception:
             log.exception("Falha ao abrir handle de upload")
             return paramiko.SFTP_FAILURE
+
+    def session_ended(self):
+        """Hook chamado pelo paramiko quando o subsystem SFTP termina.
+
+        Processa qualquer file que foi escrito nesta sessão e ainda existe
+        no disco — caso o cliente tenha fechado a conexão sem mandar
+        SSH_FXP_CLOSE (ZTE C320 com `file-server manual-backup` faz isso).
+        Sem esse fallback, o file órfão fica indefinidamente em disco e
+        nunca chega na tabela de backups.
+
+        Em fluxo normal (cliente envia CLOSE), o NexusSFTPHandle.close()
+        já chamou processar_upload_local e deletou o file — `os.path.exists`
+        retorna False, e nós pulamos. Idempotente.
+        """
+        try:
+            for fpath in list(self._dirty_files):
+                try:
+                    if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
+                        log.warning(
+                            "SFTP %s: cliente fechou sem CLOSE no handle — "
+                            "processando %s no session_ended fallback",
+                            self.ssh_server.client_ip, fpath,
+                        )
+                        self.processar_upload_local(fpath)
+                        try:
+                            os.unlink(fpath)
+                        except OSError:
+                            pass
+                except Exception:
+                    log.exception("session_ended: falha processando %s", fpath)
+            self._dirty_files.clear()
+        finally:
+            super().session_ended()
 
     def list_folder(self, path):
         real = self._real_path(path)

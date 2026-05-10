@@ -228,8 +228,17 @@ commit`,
 copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-datacom.cfg`,
   intelbras: `# Cisco-like: copy via scp:// na maioria das builds.
 copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-intelbras.cfg`,
-  zte:       `# ZTE ZXR10 (firmware recente):
-copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-zte.cfg`,
+  zte:       `# ZTE ZXR10 (switch/router — firmware recente):
+copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-zte.cfg
+
+# ZTE ZXA10 OLT (C300/C320/C600 etc.) — sintaxe file-server:
+# Validado em 2026-05-10 com C320. Importante: o "path" é o NOME do arquivo
+# destino (não diretório). NEXUS BACKUP só permite escrita no homedir do user.
+file-server manual-backup cfg server-index 1 ipaddress <SERVIDOR> sftp \\
+  path zte-c320 user <USUARIO> password <SENHA>
+
+# Acompanhar progresso:
+show auto-backup progress manual`,
   nokia:     `admin save sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-nokia.cfg`,
   ubiquiti:  `# Ubiquiti EdgeOS:
 configure
