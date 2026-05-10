@@ -6,6 +6,19 @@ import { Download, RefreshCw, Filter, Eye, X, CheckCircle, XCircle, Search, Fold
 // drasticamente é bem incomum em equipamentos de rede).
 const ALERTA_RATIO = 0.5
 
+// Extrai extensão do nome_arquivo em lowercase (ex: '.zip', '.txt', '.cfg').
+// Usado pra comparar tamanho só entre arquivos do mesmo "tipo" — UNM2000
+// envia .txt + .zip por backup, e cada um tem ordem de magnitude diferente.
+// Comparar .txt do dia X com .zip do dia X-1 sempre dá "queda de 99%" que
+// é falso positivo. Se nome_arquivo não está setado (backups antigos
+// pré-coluna ou origem manual/scheduler), retorna '' e comparação fica
+// linear (comportamento legado preservado).
+function _extOf(nome) {
+  if (!nome) return ''
+  const i = nome.lastIndexOf('.')
+  return i >= 0 ? nome.slice(i).toLowerCase() : ''
+}
+
 function formatarTamanho(bytes) {
   if (!bytes && bytes !== 0) return '—'
   if (bytes < 1024) return `${bytes} B`
@@ -133,22 +146,29 @@ export default function Backups() {
       g.ultimo = g.backups[0]
 
       // Tamanho de cada backup + flag de "redução suspeita" comparando com o
-      // backup bem-sucedido IMEDIATAMENTE anterior (mais antigo) do mesmo device.
+      // último backup bem-sucedido anterior do MESMO device E DA MESMA
+      // EXTENSÃO de nome_arquivo. Pular extensão diferente é essencial pra
+      // UNM2000 (manda .txt+.zip por export — comparar .txt com .zip dá
+      // sempre queda gigante e é falso positivo). Backups sem nome_arquivo
+      // (pré-migração / SSH manual) caem no comportamento legado: extensão
+      // '' bate com '', então comparação fica linear.
       // backups está em DESC (índice 0 = mais novo), então procuramos j > i.
       for (let i = 0; i < g.backups.length; i++) {
         const cur = g.backups[i]
         cur.tamanho_bytes = cur.conteudo?.length ?? 0
         cur.alerta_tamanho = false
         if (cur.status !== 'sucesso' || cur.tamanho_bytes === 0) continue
+        const curExt = _extOf(cur.nome_arquivo)
         for (let j = i + 1; j < g.backups.length; j++) {
           const prev = g.backups[j]
           if (prev.status !== 'sucesso') continue
+          if (_extOf(prev.nome_arquivo) !== curExt) continue  // pula tipos diferentes
           const prevSize = prev.conteudo?.length ?? 0
           if (prevSize > 0 && cur.tamanho_bytes < ALERTA_RATIO * prevSize) {
             cur.alerta_tamanho = true
             cur.alerta_anterior_bytes = prevSize
           }
-          break  // só compara com o sucesso imediatamente anterior
+          break  // primeiro sucesso compatível encontrado, não procura mais antigos
         }
       }
       g.tem_alerta = g.backups.some(b => b.alerta_tamanho)
