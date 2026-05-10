@@ -101,13 +101,36 @@ def _gerar_ftp_user(device_id: int, tipo: DeviceTipo | None = None) -> str:
     return f"ftp_{device_id:05d}"
 
 
-def _ftp_senha_len_para_tipo(tipo: DeviceTipo | None) -> int:
-    """Tamanho da senha FTP gerada conforme o tipo do device.
+def _ftp_senha_len_para_device(tipo: DeviceTipo | None, fabricante=None) -> int:
+    """Tamanho da senha FTP gerada conforme tipo + fabricante.
 
-    UNM2000 (Fiberhome NMS) limita a senha em 20 chars no campo do EMS
-    Control and Monitor Tools → Set Backup Server. Demais devices usam 32.
+    Fiberhome tem campos de senha curtos em vários pontos:
+      - UNM2000 EMS Set Backup Server     -> ~20 chars
+      - UNM2000 XFTP Server Setting       -> ~20 chars
+      - OLT AN5516/AN6000 CLI ftp passwd  -> ~16 chars (limite firmware)
+
+    Quando o UNM2000 dispara Configuration Export Task, ele transmite a senha
+    para a OLT executar o upload. Senha maior que o limite da OLT é truncada
+    silenciosamente -> auth fail no nosso servidor com 'senha_invalida'.
+
+    Lógica:
+      - tipo=unm2000              -> 20 chars (limite EMS)
+      - fabricante=fiberhome      -> 16 chars (limite OLT AN5516)
+      - default                   -> 32 chars
     """
-    return 20 if tipo == DeviceTipo.unm2000 else 32
+    if tipo == DeviceTipo.unm2000:
+        return 20
+    # fabricante pode chegar como enum DeviceVendor ou string ('fiberhome')
+    fab_val = getattr(fabricante, "value", fabricante)
+    if fab_val == "fiberhome":
+        return 16
+    return 32
+
+
+# Wrapper de compat — código existente que ainda chama _ftp_senha_len_para_tipo
+# continua funcionando (retorna o tamanho considerando só o tipo, sem fabricante).
+def _ftp_senha_len_para_tipo(tipo: DeviceTipo | None) -> int:
+    return _ftp_senha_len_para_device(tipo, fabricante=None)
 
 
 def _gerar_ftp_senha(comprimento: int = 32) -> str:
@@ -197,7 +220,7 @@ async def criar_device(
     ftp_senha_plain: Optional[str] = None
     if gera_credencial:
         device.ftp_user = _gerar_ftp_user(device.id, device.tipo)
-        ftp_senha_plain = _gerar_ftp_senha(_ftp_senha_len_para_tipo(device.tipo))
+        ftp_senha_plain = _gerar_ftp_senha(_ftp_senha_len_para_device(device.tipo, device.fabricante))
         device.ftp_senha_enc = encrypt(ftp_senha_plain)
         await db.commit()
         await db.refresh(device)
@@ -301,7 +324,7 @@ async def regenerar_credencial_ftp(
     user_correto = _gerar_ftp_user(device.id, device.tipo)
     if not device.ftp_user or device.ftp_user != user_correto:
         device.ftp_user = user_correto
-    nova_senha = _gerar_ftp_senha(_ftp_senha_len_para_tipo(device.tipo))
+    nova_senha = _gerar_ftp_senha(_ftp_senha_len_para_device(device.tipo, device.fabricante))
     device.ftp_senha_enc = encrypt(nova_senha)
     await db.commit()
     return FTPCredentialOut(
