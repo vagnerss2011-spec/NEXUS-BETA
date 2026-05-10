@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { LayoutDashboard, Router, Archive, Users, LogOut, Shield, Settings, ScrollText, Building2, Repeat, X } from 'lucide-react'
 import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
+import { APP_VERSION } from '../version'
 
 // Em mobile (< md) a sidebar vira drawer overlay controlada por `open`/`onClose`.
 // Em desktop (md+) o `open` é ignorado e a sidebar fica sempre visível em flex.
@@ -48,7 +49,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
         <div>
           <div className="flex items-center gap-2">
             <Shield className="text-sky-400" size={22} />
-            <span className="font-bold text-lg tracking-wide text-white">NEXUS BETA</span>
+            <span className="font-bold text-lg tracking-wide text-white">NEXUS BACKUP</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">Backup Manager</p>
         </div>
@@ -110,6 +111,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
           className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors">
           <LogOut size={16} /> Sair
         </button>
+        <p className="text-center text-[10px] text-slate-600 mt-3 tracking-wider">v{APP_VERSION}</p>
       </div>
     </aside>
   )

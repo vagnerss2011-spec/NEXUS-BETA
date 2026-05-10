@@ -425,7 +425,7 @@ ntp-service ipv6 server disable
 ntp-service server source-interface all enable
 ntp-service ipv6 server source-interface all disable
 
-# NEXUS BETA como server primário (preferred)
+# NEXUS BACKUP como server primário (preferred)
 ntp-service unicast-server <SERVIDOR> preference
 
 # Fallback público — a.ntp.br (NIC.br stratum-1, IP fixo: 200.160.0.8)

@@ -100,5 +100,5 @@ CORS do backend aceita qualquer origin RFC1918 via regex em `main.py`.
 - [x] Usuário admin criado no banco
 - [x] Acessível na rede local (192.168.1.254)
 - [x] Código salvo no GitHub (branch: `backup`)
-- [ ] Configurar HTTPS / proxy reverso (nginx) para produção
-- [ ] Adicionar notificações de falha por e-mail/webhook
+- [x] HTTPS via Let's Encrypt (certbot no compose)
+- [x] Notificações de falha por Telegram (bot único + chat por empresa)

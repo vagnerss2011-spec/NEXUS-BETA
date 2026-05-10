@@ -36,7 +36,7 @@ export default function Layout() {
           </button>
           <div className="flex items-center gap-2">
             <Shield className="text-sky-400" size={18} />
-            <span className="font-bold text-sm tracking-wide text-white">NEXUS BETA</span>
+            <span className="font-bold text-sm tracking-wide text-white">NEXUS BACKUP</span>
           </div>
         </header>
 
