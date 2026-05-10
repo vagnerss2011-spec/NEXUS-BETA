@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from database import engine, Base
-from routers import auth, users, devices, backups, settings, logs, empresas, atividades
+from routers import auth, users, devices, backups, settings, logs, empresas, atividades, version
+from version import APP_VERSION
 from services.scheduler import iniciar_scheduler, scheduler
 from services.ftp_server import iniciar_ftp_server, parar_ftp_server
 from services.sftp_server import iniciar_sftp_server, parar_sftp_server
@@ -285,7 +286,7 @@ async def lifespan(app: FastAPI):
     parar_sftp_server()
     parar_tftp_server()
 
-app = FastAPI(title="NEXUS BETA - Backup Manager", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="NEXUS BACKUP", version=APP_VERSION, lifespan=lifespan)
 
 RFC1918_REGEX = (
     r"http://(localhost|127\.0\.0\.1"
@@ -311,7 +312,8 @@ app.include_router(backups.router)
 app.include_router(settings.router)
 app.include_router(logs.router)
 app.include_router(atividades.router)
+app.include_router(version.router)
 
 @app.get("/")
 async def root():
-    return {"status": "NEXUS BETA online"}
+    return {"status": "NEXUS BACKUP online", "version": APP_VERSION}

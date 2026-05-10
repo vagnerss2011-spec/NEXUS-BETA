@@ -12,6 +12,23 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.0] - 2026-05-10
+
+### Adicionado
+
+- **Banner de "versão nova disponível" no painel** — aparece em todas as páginas (via `Layout.jsx`) quando o backend detecta uma tag `vX.Y.Z` mais recente que a versão rodando. Botão "Ver mudanças" abre modal com o changelog resumido (entradas entre versão atual e mais recente). Botão "Dispensar" guarda em `localStorage` por tag — quando vier release nova, o banner volta automaticamente. Update continua **manual via SSH** (notificação-only, respeita `feedback_no_auto_sync_remoto`).
+- **`GET /api/version/check`** (auth required) — retorna `{current, latest, update_available, changelog_summary, checked_at}`. Cache em memória TTL 1h pra evitar estourar rate limit do GitHub. Falha-tolerante: token errado / API fora = retorna `latest=null` (banner não aparece, sem ruído).
+- **`backend/version.py`** com `APP_VERSION` — fonte única consultada pelo endpoint de check e usado em `FastAPI(title=..., version=APP_VERSION)`. Bump junto com `frontend/package.json` a cada release (documentado em `RELEASING.md` checklist).
+- **Settings novos no `.env`:**
+  - `GITHUB_TOKEN` (PAT scope `repo` read) — vazio = checagem desabilitada, banner não aparece.
+  - `GITHUB_REPO` (default `vagnerss2011-spec/NEXUS-BETA`) — override pra fork interno.
+
+### Mudado
+
+- `FastAPI(title=...)` mudou de `"NEXUS BETA - Backup Manager"` pra `"NEXUS BACKUP"` (alinhamento com rename feito em v1.0.0).
+- `FastAPI(version=...)` agora vem de `backend/version.py` em vez de hardcoded `"1.0.0"` — `/docs` mostra a versão correta.
+- Endpoint `GET /` ainda retorna `{status, version}`, mas com label "NEXUS BACKUP online" e versão dinâmica.
+
 ## [1.1.2] - 2026-05-10
 
 PATCH com 5 correções no `scripts/install-nexus-backup.sh` descobertas durante a primeira instalação real em VM Debian 13 Trixie limpa (`nexus.camon.net.br`, validada em prod com OLT/UNM2000).
@@ -131,7 +148,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.2...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.0.0...v1.1.0

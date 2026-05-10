@@ -23,14 +23,20 @@ Em dúvida, prefira MAJOR — bump excessivo não machuca, MAJOR escondido como 
 
 ## Cortar uma nova versão
 
-### 1. Atualizar `frontend/package.json`
+### 1. Atualizar versão em **2 lugares** (frontend + backend)
 
-Bump do campo `"version"` segundo a política acima.
+Os 2 precisam ficar em sync — se ficarem desincronizados, o banner de update no painel pode mostrar "Versão X disponível" enquanto o frontend já está em X (barulho na UI).
 
 ```bash
-# Exemplo: vai sair v1.1.0
-sed -i 's/"version": "1.0.0"/"version": "1.1.0"/' frontend/package.json
+# Exemplo: vai sair v1.2.0
+sed -i 's/"version": "1.1.2"/"version": "1.2.0"/' frontend/package.json
+sed -i 's/APP_VERSION = "1.1.2"/APP_VERSION = "1.2.0"/' backend/version.py
 ```
+
+| Arquivo | Quem consome |
+|---|---|
+| `frontend/package.json` | Vite injeta como `__APP_VERSION__` em build → exibido na sidebar/login |
+| `backend/version.py` | Backend usa em `/api/version/check` (compara com tag mais recente do GitHub) e em `FastAPI(title=..., version=APP_VERSION)` |
 
 ### 2. Atualizar `CHANGELOG.md`
 
@@ -45,7 +51,7 @@ Atualizar os links no rodapé:
 ### 3. Commitar a release
 
 ```bash
-git add frontend/package.json CHANGELOG.md
+git add frontend/package.json backend/version.py CHANGELOG.md
 git commit -m "release: v1.1.0"
 ```
 
@@ -144,6 +150,7 @@ git push origin v1.2.0
 ## Checklist de release
 
 - [ ] `frontend/package.json` versão batida com a tag
+- [ ] `backend/version.py` versão batida com a tag (bump junto)
 - [ ] `CHANGELOG.md` atualizado, seção `[Não lançado]` esvaziada
 - [ ] Migrations testadas em DB com dados (não só DB zerado)
 - [ ] Tag anotada (`-a`) e pushed

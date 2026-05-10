@@ -60,6 +60,13 @@ services:
       # chegam com 0 bytes. Setar com IP público do servidor (ou IP
       # roteável pelos clientes). Vazio = comportamento default.
       FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:-}
+      # Checagem de versão: PAT do GitHub com scope 'repo' (read).
+      # Vazio = banner de update no painel não aparece. Necessário porque
+      # o repo é privado — sem token a API GitHub retorna 404.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Repo no formato "owner/repo". Default vai pro repo oficial; instâncias
+      # custom (fork interno, etc.) podem trocar via .env.
+      GITHUB_REPO: ${GITHUB_REPO:-vagnerss2011-spec/NEXUS-BETA}
     depends_on:
       db:
         condition: service_healthy

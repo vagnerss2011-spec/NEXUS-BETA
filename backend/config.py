@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     # funcionar. Sem isso, uploads chegam com 0 bytes (controle OK, dados ✗).
     # Vazio = não anuncia nada (cliente usa o IP da control connection).
     FTP_MASQUERADE_ADDRESS: str = ""
+    # ===== Checagem de versão (banner de update no painel) =====
+    # Repo no formato "owner/repo" — usado pra montar URL da API GitHub.
+    # Default aponta pro repo oficial; instâncias custom podem trocar pra
+    # apontar pra fork interno.
+    GITHUB_REPO: str = "vagnerss2011-spec/NEXUS-BETA"
+    # Personal Access Token com scope 'repo' (read). Vazio = checagem
+    # desabilitada (endpoint retorna latest=None, banner não aparece).
+    # Necessário porque o repo é privado — sem token a API GitHub
+    # retorna 404 e nem dá pra ler tags/CHANGELOG.
+    GITHUB_TOKEN: str = ""
 
     class Config:
         env_file = ".env"

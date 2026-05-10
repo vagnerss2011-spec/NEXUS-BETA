@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Menu, Shield } from 'lucide-react'
 import Sidebar from './Sidebar'
+import UpdateBanner from './UpdateBanner'
 
 // Em desktop (md+) Sidebar é parte do flex layout; em mobile (< md) ela vira
 // drawer overlay controlada por sidebarOpen — botão hambúrguer abre, backdrop
@@ -39,6 +40,8 @@ export default function Layout() {
             <span className="font-bold text-sm tracking-wide text-white">NEXUS BACKUP</span>
           </div>
         </header>
+
+        <UpdateBanner />
 
         <main className="flex-1 overflow-y-auto bg-slate-900 p-4 md:p-6">
           <Outlet />
