@@ -43,12 +43,12 @@ const STATUS_FILTROS = [
 // comando de backup. Padronizamos em 22 para todos os fabricantes.
 const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_push: 69 }
 
-// IPv4 público do servidor de backup. Hardcoded de propósito: muitos equipamentos
-// que fazem push (OLTs, switches) não resolvem nomes — exibir um IP fixo nos
-// exemplos é mais confiável que usar window.location.hostname (que pode ser o
-// domínio backup.bandaa.net.br quando o admin acessa pelo painel).
-// Atualizar AQUI se o servidor migrar de IP/host.
-const IP_SERVIDOR_BACKUP = '45.5.16.28'
+// O IP do servidor que aparece nos exemplos vem do backend (/api/info/server),
+// que retorna o FTP_MASQUERADE_ADDRESS configurado no .env desta instância.
+// Por que dinâmico: cada instância (multi-tenant em redes diferentes) tem IP
+// próprio — antes (até v1.2.0) era hardcoded, então uma instância nova
+// mostrava o IP da instância antiga nos exemplos. Fallback `<SERVIDOR>` se
+// o fetch falhar / .env não tiver FTP_MASQUERADE_ADDRESS preenchido.
 const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
 const PUSH_PROTOCOLS = ['sftp_push', 'ftp_push', 'tftp_push']  // ordem do select (SFTP recomendado)
 const PUSH_PROTO_INFO = {
@@ -403,9 +403,9 @@ function montarExemploPush(protocolo, fabricante, servidor, usuario, senha, tipo
 
 // === NTP client ===
 // Equipamentos sem hora correta geram timestamps errados nos logs e backups.
-// O servidor (45.5.16.28) roda chrony desde 2026-04-27 e aceita conexões NTP
-// dos CIDRs RFC1918 + RFC6598 + 45.5.16.0/22 (UDP/123). Cada exemplo abaixo
-// é o comando idiomático do fabricante para apontar NTP client pra esse IP.
+// Cada instância nexus-backup roda chrony e aceita conexões NTP do RFC1918 +
+// RFC6598 + faixas custom configuradas no install (env NEXUS_EXTRA_CIDRS).
+// O placeholder `<SERVIDOR>` é substituído pelo IP da instância atual em runtime.
 const NTP_EXAMPLES = {
   mikrotik:   `# RouterOS v6: cliente NTP simples
 /system ntp client set enabled=yes primary-ntp=<SERVIDOR>
@@ -521,6 +521,9 @@ export default function Devices() {
   // Separa visualmente OLT/equipamentos de NMS UNM2000 — mesmos models, fluxos
   // diferentes (UNM2000 é receptor, sempre push, senha 20 chars). 'olt' é default.
   const [aba, setAba] = useState('olt')
+  // IP da instância atual — busca do backend pra dinamizar exemplos por fabricante.
+  // Fallback string vazia → aplicar_template/JSX caem em '<SERVIDOR>' visível.
+  const [serverIp, setServerIp] = useState('')
   const user = JSON.parse(localStorage.getItem('user') || '{}')
   const empresa = getCurrentEmpresa()
   const canEdit = ['admin', 'admin_empresa', 'operador'].includes(user.role)
@@ -570,6 +573,15 @@ export default function Devices() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Busca o IP desta instância pra dinamizar exemplos. Falha = fica string
+  // vazia, exemplos mostram o placeholder `<SERVIDOR>` (visível pro admin
+  // editar). Cacheado em memória do componente — reinicia em F5.
+  useEffect(() => {
+    api.get('/info/server')
+      .then(({ data }) => { if (data?.ftp_endpoint) setServerIp(data.ftp_endpoint) })
+      .catch(() => {})
+  }, [])
 
   function openNew() { setForm(BLANK); setMostrarSenha(false); setConfirmandoFab(false); setModal('new') }
   function openNewFtp() {
@@ -1005,7 +1017,7 @@ export default function Devices() {
                 <span><strong>Anote a senha agora.</strong> Por segurança, ela não será mostrada novamente. Se perder, é só regenerar pelo botão na linha do dispositivo.</span>
               </div>
               {[
-                { label: 'Servidor', value: IP_SERVIDOR_BACKUP, mono: true },
+                { label: 'Servidor', value: serverIp || '<configure FTP_MASQUERADE_ADDRESS no .env>', mono: true },
                 { label: 'Porta', value: String(DEFAULT_PORTS[credencialFtp.protocolo] ?? 21) },
                 { label: 'Usuário', value: credencialFtp.ftp_user, mono: true },
                 { label: 'Senha', value: credencialFtp.ftp_senha, mono: true },
@@ -1042,7 +1054,7 @@ export default function Devices() {
                       onClick={() => navigator.clipboard?.writeText(montarExemploPush(
                         credencialFtp.protocolo,
                         credencialFtp.fabricante,
-                        IP_SERVIDOR_BACKUP,
+                        serverIp,
                         credencialFtp.ftp_user,
                         credencialFtp.ftp_senha,
                         credencialFtp.tipo,
@@ -1057,7 +1069,7 @@ export default function Devices() {
                     {montarExemploPush(
                       credencialFtp.protocolo,
                       credencialFtp.fabricante,
-                      IP_SERVIDOR_BACKUP,
+                      serverIp,
                       credencialFtp.ftp_user,
                       credencialFtp.ftp_senha,
                       credencialFtp.tipo,
@@ -1075,7 +1087,7 @@ export default function Devices() {
                       type="button"
                       onClick={() => navigator.clipboard?.writeText(montarExemploNtp(
                         credencialFtp.fabricante,
-                        IP_SERVIDOR_BACKUP,
+                        serverIp,
                       ))}
                       title="Copiar comando NTP"
                       className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
@@ -1084,7 +1096,7 @@ export default function Devices() {
                     </button>
                   </div>
                   <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-56 overflow-auto">
-                    {montarExemploNtp(credencialFtp.fabricante, IP_SERVIDOR_BACKUP)}
+                    {montarExemploNtp(credencialFtp.fabricante, serverIp)}
                   </pre>
                 </div>
               )}
@@ -1226,7 +1238,7 @@ export default function Devices() {
                       </label>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP, undefined, undefined, form.tipo))}
+                        onClick={() => navigator.clipboard?.writeText(montarExemploPush(form.protocolo, form.fabricante, serverIp, undefined, undefined, form.tipo))}
                         title="Copiar comando"
                         className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
                       >
@@ -1234,7 +1246,7 @@ export default function Devices() {
                       </button>
                     </div>
                     <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
-                      {montarExemploPush(form.protocolo, form.fabricante, IP_SERVIDOR_BACKUP, undefined, undefined, form.tipo)}
+                      {montarExemploPush(form.protocolo, form.fabricante, serverIp, undefined, undefined, form.tipo)}
                     </pre>
                     <p className="text-xs text-slate-500 mt-1">
                       {form.protocolo === 'tftp_push'
@@ -1249,7 +1261,7 @@ export default function Devices() {
                       </label>
                       <button
                         type="button"
-                        onClick={() => navigator.clipboard?.writeText(montarExemploNtp(form.fabricante, IP_SERVIDOR_BACKUP))}
+                        onClick={() => navigator.clipboard?.writeText(montarExemploNtp(form.fabricante, serverIp))}
                         title="Copiar comando NTP"
                         className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-2 py-0.5 border border-slate-600 rounded transition-colors"
                       >
@@ -1257,7 +1269,7 @@ export default function Devices() {
                       </button>
                     </div>
                     <pre className="bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-auto">
-                      {montarExemploNtp(form.fabricante, IP_SERVIDOR_BACKUP)}
+                      {montarExemploNtp(form.fabricante, serverIp)}
                     </pre>
                     <p className="text-xs text-slate-500 mt-1">
                       Equipamentos sem NTP geram timestamps errados. O servidor aceita NTP em UDP/123 dos CIDRs RFC1918 + RFC6598 + 45.5.16.0/22.

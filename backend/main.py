@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from database import engine, Base
-from routers import auth, users, devices, backups, settings, logs, empresas, atividades, version
+from routers import auth, users, devices, backups, settings, logs, empresas, atividades, version, info
 from version import APP_VERSION
 from services.scheduler import iniciar_scheduler, scheduler
 from services.ftp_server import iniciar_ftp_server, parar_ftp_server
@@ -313,6 +313,7 @@ app.include_router(settings.router)
 app.include_router(logs.router)
 app.include_router(atividades.router)
 app.include_router(version.router)
+app.include_router(info.router)
 
 @app.get("/")
 async def root():

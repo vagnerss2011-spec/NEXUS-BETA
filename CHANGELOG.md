@@ -12,6 +12,21 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.1] - 2026-05-10
+
+### Corrigido
+
+- **IP do servidor nos exemplos por fabricante (página Dispositivos) agora é dinâmico.** Antes era hardcoded `45.5.16.28` (IP da `backup.bandaa.net.br`) — uma instância nova mostrava o IP da instância antiga nos exemplos de FTP push, NTP, etc. Agora o frontend busca o IP via novo endpoint `GET /api/info/server` (retorna `FTP_MASQUERADE_ADDRESS` da instância) e substitui o placeholder `<SERVIDOR>` em runtime.
+- Comentários em `Devices.jsx` referentes a "servidor 45.5.16.28" e instruções "atualizar AQUI" removidos — agora multi-instância sem mudança de código.
+
+### Adicionado
+
+- Novo endpoint `GET /api/info/server` (auth required) — retorna `{ftp_endpoint}` com o IP que clientes usam pra alcançar essa instância (FTP_MASQUERADE_ADDRESS). Usado pelo frontend pra dinamizar exemplos de comando.
+
+### Sabidos
+
+- Se `.env` não tiver `FTP_MASQUERADE_ADDRESS` preenchido, a coluna "Servidor" no modal de credencial gerada mostra `<configure FTP_MASQUERADE_ADDRESS no .env>` em vez de IP — sinal claro pro admin que a config está incompleta.
+
 ## [1.2.0] - 2026-05-10
 
 ### Adicionado
@@ -148,7 +163,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.0...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.2...v1.2.0
 [1.1.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.0...v1.1.1
