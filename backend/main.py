@@ -32,7 +32,8 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text(f"ALTER TYPE protocolo ADD VALUE IF NOT EXISTS '{proto}'"))
             except Exception:
                 pass
-        for ev in ("ftp_backup_recebido", "ftp_volume_alto", "ftp_acesso_negado"):
+        for ev in ("ftp_backup_recebido", "ftp_volume_alto", "ftp_acesso_negado",
+                   "ftp_backup_falha"):
             try:
                 await conn.execute(text(f"ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS '{ev}'"))
             except Exception:

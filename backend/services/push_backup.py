@@ -27,13 +27,18 @@ VOLUME_ALTO_LIMITE = 5  # uploads/24h que disparam alerta
 
 
 def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int,
-                     db: Session, nome_arquivo: str | None = None) -> None:
+                     db: Session, nome_arquivo: str | None = None,
+                     protocolo: str = "FTP") -> None:
     """Aplica dedupe diário + insert + retenção + audit + alerta de volume.
     Caller responsabiliza pelo db.commit() (ou pode passar já em transação).
 
     nome_arquivo: nome original do arquivo recebido. Crítico pra UNM2000 que
     pode mandar múltiplos arquivos por dia (1 zip + N cfgs de OLTs distintas)
     usando a mesma credencial FTP — sem o nome, perde-se a identificação.
+
+    protocolo: "FTP" | "SFTP" | "TFTP" — gravado no detalhe da Atividade pra
+    a UI de Logs distinguir qual servidor recebeu (sem precisar consultar
+    Device.protocolo no render).
 
     Dedupe: pra devices que recebem só 1 arquivo/dia (OLT direto), substitui
     o backup do dia. Pra UNM2000 (tipo='unm2000'), permite múltiplos arquivos
@@ -72,7 +77,7 @@ def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int
         tipo=TipoAtividade.ftp_backup_recebido, usuario_id=None,
         usuario_nome="ftp", empresa_id=device.empresa_id, ip=ip,
         alvo_tipo="device", alvo_nome=device.nome,
-        detalhe=f"{tamanho} bytes",
+        detalhe=_formatar_detalhe(protocolo, _humanizar_bytes(tamanho), nome_arquivo),
     ))
 
     # Volume alto: 1 alerta por device por janela de 24h.
@@ -97,7 +102,7 @@ def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int
                 tipo=TipoAtividade.ftp_volume_alto, usuario_id=None,
                 usuario_nome="ftp", empresa_id=device.empresa_id, ip=ip,
                 alvo_tipo="device", alvo_nome=device.nome,
-                detalhe=f"{uploads} uploads em 24h",
+                detalhe=_formatar_detalhe(protocolo, f"{uploads} uploads em 24h"),
             ))
             # Alerta Telegram (1x por janela 24h, mesma logica de dedupe da atividade).
             # Falha-tolerante — não propaga se Telegram fora do ar.
@@ -117,11 +122,13 @@ def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int
 
 
 def auditar_acesso_negado(db: Session, ip: str | None, alvo_nome: str | None,
-                          empresa_id: int | None, detalhe: str) -> None:
+                          empresa_id: int | None, detalhe: str,
+                          protocolo: str = "FTP") -> None:
     db.add(Atividade(
         tipo=TipoAtividade.ftp_acesso_negado, usuario_id=None,
         usuario_nome="ftp", empresa_id=empresa_id, ip=ip,
-        alvo_tipo="device", alvo_nome=alvo_nome, detalhe=detalhe,
+        alvo_tipo="device", alvo_nome=alvo_nome,
+        detalhe=_formatar_detalhe(protocolo, detalhe),
     ))
     db.commit()
     # Alerta Telegram. Em ambientes com brute-force ativo isso pode spammar —
@@ -131,6 +138,7 @@ def auditar_acesso_negado(db: Session, ip: str | None, alvo_nome: str | None,
         db,
         titulo="🛑 Acesso push negado",
         detalhes=(
+            f"<b>Protocolo:</b> {protocolo}\n"
             f"<b>IP origem:</b> <code>{ip or '?'}</code>\n"
             f"<b>Tentou usuário:</b> <code>{alvo_nome or '?'}</code>\n"
             f"<b>Motivo:</b> <i>{detalhe}</i>"
@@ -138,3 +146,64 @@ def auditar_acesso_negado(db: Session, ip: str | None, alvo_nome: str | None,
         empresa_id=empresa_id,
         categoria="push_negado",
     )
+
+
+def auditar_falha_push(db: Session, device: Device | None, ip: str | None,
+                       motivo: str, protocolo: str,
+                       nome_arquivo: str | None = None,
+                       empresa_id: int | None = None) -> None:
+    """Registra falha de upload APÓS autenticação bem-sucedida.
+
+    Cobre o gap entre 'auth_ok' e 'backup persistido': arquivo de 0 bytes,
+    tamanho excedido, exceção no parser binário, OSError lendo arquivo, etc.
+
+    Distinto de auditar_acesso_negado: aqui a credencial foi aceita — o
+    problema foi do lado do conteúdo/transferência. UI de Logs exibe com
+    ícone diferente (warning vs. denied).
+
+    Pode ser chamado com device=None em casos onde o auth foi por IP only
+    (TFTP) e o device foi resolvido mas a sessão quebrou antes do persist —
+    nesses casos passar empresa_id explicitamente se conhecido.
+    """
+    alvo_nome = device.nome if device else None
+    emp = empresa_id if empresa_id is not None else (device.empresa_id if device else None)
+    db.add(Atividade(
+        tipo=TipoAtividade.ftp_backup_falha, usuario_id=None,
+        usuario_nome="ftp", empresa_id=emp, ip=ip,
+        alvo_tipo="device", alvo_nome=alvo_nome,
+        detalhe=_formatar_detalhe(protocolo, motivo, nome_arquivo),
+    ))
+    db.commit()
+    # Sem alerta Telegram aqui — falhas de upload podem entrar em loop com
+    # device mal configurado e spammar. O alerta ftp_volume_alto cobre o
+    # caso macro (volume anormal); pra cada falha individual a UI de Logs
+    # já dá visibilidade suficiente.
+
+
+# ───────────────────────── helpers internos ─────────────────────────
+
+def _formatar_detalhe(protocolo: str, motivo: str,
+                      nome_arquivo: str | None = None) -> str:
+    """Padroniza o campo detalhe da Atividade pra UI parsear: 'PROTO · motivo[ · arquivo]'.
+
+    Frontend faz split por ' · ' pra extrair as partes (ver Logs.jsx).
+    """
+    partes = [protocolo, motivo]
+    if nome_arquivo:
+        partes.append(nome_arquivo)
+    return " · ".join(partes)
+
+
+def _humanizar_bytes(n: int) -> str:
+    """Formata bytes pra leitura humana (ex.: 8421 → '8.2 KB', 3500000 → '3.3 MB').
+
+    Sem dependência externa — i18n simples (KB/MB/GB) cobre todos os tamanhos
+    plausíveis de backup (limite hard hoje é 50 MB pro UNM2000).
+    """
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 * 1024 * 1024):.1f} GB"

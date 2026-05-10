@@ -10,10 +10,23 @@ Política de bump:
 
 ## [Não lançado]
 
+_(linhas que vão entrar na próxima tag)_
+
+## [1.1.0] - 2026-05-10
+
 ### Adicionado
 
+- **Logs do Sistema (página Logs)** agora mostra também os eventos de push (FTP/SFTP/TFTP) misturados cronologicamente com as execuções do scheduler. Filtros por chip (Tudo / Scheduler / Push) sem perder o ordenamento global. Cada linha de push exibe protocolo, status (recebido / falha / negado / volume alto), device, IP origem, motivo e nome do arquivo. Cliques em linhas de scheduler continuam abrindo o modal de detalhe por device.
+- Novo `TipoAtividade.ftp_backup_falha` — registra **falhas de transferência/processamento APÓS auth ok** (arquivo 0 bytes, tamanho > limite, exceção no parser binário, OSError lendo arquivo). Antes essas falhas só iam pro logging do uvicorn — agora ficam visíveis no painel. Distinto de `ftp_acesso_negado` (auth fail).
+- Audit de push agora carrega **protocolo** (FTP/SFTP/TFTP) e **nome do arquivo** no campo `detalhe`, separados por ` · ` (formato: `PROTOCOLO · motivo · arquivo`). UI parseia pra render.
+- `/api/atividades?tipos=...` aceita filtro CSV de `TipoAtividade` (ex.: `tipos=ftp_backup_recebido,ftp_backup_falha`). Tipos inválidos são silenciosamente ignorados (resiliente a typo). Limite máximo subiu de 200 → 500.
 - `scripts/install-nexus-backup.sh` — bootstrap idempotente pra Debian 13 (Trixie). Configura locale/timezone, Docker (repo oficial + daemon.json com bip/pools), chrony (allow + ratelimit), fail2ban (action docker-allports + filter+jail nexus-ftp), UFW, clona o repo na tag mais recente, gera `.env` com secrets aleatórios. Não toca em SSH (deixa pro operador via console). Suporta flag `--interactive` que apresenta cada um dos 8 passos com descrição + por quê e pede confirmação ([s]im/[n]ão/[a]ll/[q]uit).
 - `docs/INSTALL.md` — runbook ponta-a-ponta pra provisionar nova instância (Proxmox VM Debian 13 → mover SSH pra 2288 → script bootstrap → editar `.env` → certbot → compose up → criar admin → validar). Inclui troubleshooting e diferenças vs. servidor Debian 12 antigo.
+
+### Mudado
+
+- Página `Logs` renomeada de "Logs do Scheduler" para "Logs do Sistema" — agora abrange ambas as fontes (scheduler + push).
+- Mensagem do alerta Telegram em `push_negado` agora inclui o protocolo (FTP/SFTP/TFTP) — antes só mostrava IP e usuário, sem dizer qual servidor recebeu o ataque.
 
 ## [1.0.0] - 2026-05-10
 
@@ -88,5 +101,6 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.0.0...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/releases/tag/v1.0.0

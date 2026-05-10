@@ -30,7 +30,7 @@ import random
 from ipaddress import ip_address, ip_network
 from sqlalchemy import select
 from models import Device, Protocolo
-from services.push_backup import SyncSessionLocal, processar_upload
+from services.push_backup import SyncSessionLocal, processar_upload, auditar_falha_push
 
 log = logging.getLogger("nexus.tftp")
 
@@ -164,6 +164,12 @@ def _handle_wrq(client_addr: tuple, filename: str, options: dict):
                 _send_error(sock_tmp, client_addr, ERR_DISK_FULL,
                             f"file too large (max {MAX_FILE_SIZE})")
                 sock_tmp.close()
+                with SyncSessionLocal() as db:
+                    auditar_falha_push(
+                        db, device, client_ip,
+                        motivo=f"tamanho anunciado excede limite ({tsize_anunciado} > {MAX_FILE_SIZE})",
+                        protocolo="TFTP", nome_arquivo=filename,
+                    )
                 return
             oack_options["tsize"] = str(tsize_anunciado)
         except ValueError:
@@ -208,6 +214,12 @@ def _handle_wrq(client_addr: tuple, filename: str, options: dict):
             buffer.extend(chunk)
             if len(buffer) > MAX_FILE_SIZE:
                 _send_error(sock, src, ERR_DISK_FULL, "file too large")
+                with SyncSessionLocal() as db:
+                    auditar_falha_push(
+                        db, device, client_ip,
+                        motivo=f"tamanho excedido durante recebimento (>{MAX_FILE_SIZE})",
+                        protocolo="TFTP", nome_arquivo=filename,
+                    )
                 return
             sock.sendto(struct.pack("!HH", OP_ACK, num), src)
             if len(chunk) < blksize:
@@ -223,6 +235,10 @@ def _handle_wrq(client_addr: tuple, filename: str, options: dict):
         tamanho = len(buffer)
         if tamanho == 0:
             log.warning("TFTP %s: arquivo vazio recebido — descartando", client_ip)
+            with SyncSessionLocal() as db:
+                auditar_falha_push(db, device, client_ip,
+                                   motivo="arquivo vazio (0 bytes)",
+                                   protocolo="TFTP", nome_arquivo=filename)
             return
         try:
             conteudo = buffer.decode("utf-8", errors="replace")
@@ -235,7 +251,8 @@ def _handle_wrq(client_addr: tuple, filename: str, options: dict):
             ).scalar_one_or_none()
             if not db_device:
                 return
-            processar_upload(db_device, conteudo, client_ip, tamanho, db)
+            processar_upload(db_device, conteudo, client_ip, tamanho, db,
+                             nome_arquivo=filename, protocolo="TFTP")
             db.commit()
         log.info("TFTP %s: backup recebido (%d bytes) → device #%d", client_ip, tamanho, device.id)
 

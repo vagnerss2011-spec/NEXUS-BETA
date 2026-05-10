@@ -43,6 +43,7 @@ from services.ftp_server import (
 )
 from services.push_backup import (
     SyncSessionLocal, processar_upload, auditar_acesso_negado,
+    auditar_falha_push,
 )
 
 log = logging.getLogger("nexus.sftp")
@@ -97,7 +98,8 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
             if not dev or not dev.ativo or dev.protocolo != Protocolo.sftp_push or not dev.ftp_senha_enc:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", self.client_ip, username)
                 auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=None,
-                                      detalhe="usuário SFTP inexistente ou device desabilitado")
+                                      detalhe="usuário SFTP inexistente ou device desabilitado",
+                                      protocolo="SFTP")
                 return paramiko.AUTH_FAILED
             try:
                 senha_real = decrypt(dev.ftp_senha_enc)
@@ -107,12 +109,13 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
             if password != senha_real:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", self.client_ip, username)
                 auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=dev.empresa_id,
-                                      detalhe="senha incorreta")
+                                      detalhe="senha incorreta", protocolo="SFTP")
                 return paramiko.AUTH_FAILED
             if not _ip_match(self.client_ip, dev.ftp_origem_cidr):
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", self.client_ip, username)
                 auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=dev.empresa_id,
-                                      detalhe=f"IP {self.client_ip} fora da whitelist {dev.ftp_origem_cidr}")
+                                      detalhe=f"IP {self.client_ip} fora da whitelist {dev.ftp_origem_cidr}",
+                                      protocolo="SFTP")
                 return paramiko.AUTH_FAILED
         self.username = username
         self.device_id = dev.id
@@ -156,9 +159,22 @@ class NexusSFTPHandle(paramiko.SFTPHandle):
             self.f.flush()
             self.f.close()
             self.server_iface.processar_upload_local(self.real_path)
-        except Exception:
+        except Exception as e:
             log.exception("Falha ao processar upload SFTP de %s",
                           self.server_iface.ssh_server.username)
+            try:
+                with SyncSessionLocal() as db:
+                    dev = db.execute(
+                        select(Device).where(Device.id == self.server_iface.ssh_server.device_id)
+                    ).scalar_one_or_none()
+                    auditar_falha_push(
+                        db, dev, self.server_iface.ssh_server.client_ip,
+                        motivo=f"erro ao processar: {type(e).__name__}",
+                        protocolo="SFTP",
+                        nome_arquivo=os.path.basename(self.real_path),
+                    )
+            except Exception:
+                log.exception("audit de falha SFTP também falhou — segue silencioso")
         finally:
             try:
                 os.unlink(self.real_path)
@@ -259,6 +275,7 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
             return paramiko.SFTP_FAILURE
 
     def processar_upload_local(self, real_path: str):
+        nome_arquivo = os.path.basename(real_path)
         try:
             tamanho = os.path.getsize(real_path)
         except OSError:
@@ -266,6 +283,13 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
         if tamanho == 0:
             log.warning("SFTP upload de %s rejeitado: tamanho=0",
                         self.ssh_server.username)
+            with SyncSessionLocal() as db:
+                dev = db.execute(
+                    select(Device).where(Device.id == self.ssh_server.device_id)
+                ).scalar_one_or_none()
+                auditar_falha_push(db, dev, self.ssh_server.client_ip,
+                                   motivo="arquivo vazio (0 bytes)",
+                                   protocolo="SFTP", nome_arquivo=nome_arquivo)
             return
         with SyncSessionLocal() as db:
             dev = db.execute(
@@ -277,13 +301,17 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
             if tamanho > limite:
                 log.warning("SFTP upload de %s rejeitado: tamanho=%s > limite=%s",
                             self.ssh_server.username, tamanho, limite)
+                auditar_falha_push(
+                    db, dev, self.ssh_server.client_ip,
+                    motivo=f"tamanho excedido ({tamanho} bytes > limite {limite})",
+                    protocolo="SFTP", nome_arquivo=nome_arquivo,
+                )
                 return
             # Preserva o nome original que o cliente enviou — chave pra UNM2000
             # diferenciar arquivos de OLTs distintas que chegam com mesma cred.
-            nome_arquivo = os.path.basename(real_path)
             conteudo = ler_arquivo_pra_persistir(real_path, nome_arquivo)
             processar_upload(dev, conteudo, self.ssh_server.client_ip, tamanho, db,
-                             nome_arquivo=nome_arquivo)
+                             nome_arquivo=nome_arquivo, protocolo="SFTP")
             db.commit()
 
     # Operações ainda negadas — SFTP é write-only do ponto de vista do cliente.

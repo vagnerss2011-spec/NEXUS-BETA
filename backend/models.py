@@ -65,6 +65,10 @@ class TipoAtividade(str, enum.Enum):
     ftp_backup_recebido = "ftp_backup_recebido"
     ftp_volume_alto = "ftp_volume_alto"
     ftp_acesso_negado = "ftp_acesso_negado"
+    # Falha de transfer/processamento APÓS auth ok (tamanho 0, > limite, exceção
+    # no parser binário, OSError, etc). Distinto de ftp_acesso_negado: nesse
+    # caso a credencial foi aceita mas o upload em si quebrou.
+    ftp_backup_falha = "ftp_backup_falha"
 
 class Empresa(Base):
     __tablename__ = "empresas"

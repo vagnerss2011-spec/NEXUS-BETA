@@ -25,6 +25,7 @@ from models import Device, Protocolo
 from services.crypto import decrypt
 from services.push_backup import (
     SyncSessionLocal, processar_upload, auditar_acesso_negado,
+    auditar_falha_push,
 )
 
 log = logging.getLogger("nexus.ftp")
@@ -131,7 +132,8 @@ class DBAuthorizer(DummyAuthorizer):
             if not dev or not dev.ativo or dev.protocolo != Protocolo.ftp_push or not dev.ftp_senha_enc:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", ip, username)
                 auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=None,
-                                      detalhe="usuário FTP inexistente ou device desabilitado")
+                                      detalhe="usuário FTP inexistente ou device desabilitado",
+                                      protocolo="FTP")
                 raise AuthenticationFailed("Authentication failed.")
             try:
                 senha_real = decrypt(dev.ftp_senha_enc)
@@ -141,12 +143,13 @@ class DBAuthorizer(DummyAuthorizer):
             if password != senha_real:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
                 auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
-                                      detalhe="senha incorreta")
+                                      detalhe="senha incorreta", protocolo="FTP")
                 raise AuthenticationFailed("Authentication failed.")
             if not _ip_match(ip, dev.ftp_origem_cidr):
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
                 auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
-                                      detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}")
+                                      detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}",
+                                      protocolo="FTP")
                 raise AuthenticationFailed("Authentication failed.")
 
     def get_home_dir(self, username):
@@ -188,8 +191,22 @@ class NexusFTPHandler(FTPHandler):
     def on_file_received(self, filepath):
         try:
             self._processar_upload(filepath)
-        except Exception:
+        except Exception as e:
             log.exception("Falha ao processar upload FTP de %s", self.username)
+            # Audita falha pra ficar visível no painel (se conseguir resolver o device).
+            try:
+                with SyncSessionLocal() as db:
+                    dev = db.execute(
+                        select(Device).where(Device.ftp_user == self.username)
+                    ).scalar_one_or_none()
+                    auditar_falha_push(
+                        db, dev, self.remote_ip,
+                        motivo=f"erro ao processar: {type(e).__name__}",
+                        protocolo="FTP",
+                        nome_arquivo=os.path.basename(filepath),
+                    )
+            except Exception:
+                log.exception("audit de falha FTP também falhou — segue silencioso")
         finally:
             try:
                 os.unlink(filepath)
@@ -205,12 +222,19 @@ class NexusFTPHandler(FTPHandler):
     def _processar_upload(self, filepath: str):
         username = self.username
         ip = self.remote_ip
+        nome_arquivo = os.path.basename(filepath)
         try:
             tamanho = os.path.getsize(filepath)
         except OSError:
             return
         if tamanho == 0:
             log.warning("FTP upload de %s rejeitado: tamanho=0", username)
+            with SyncSessionLocal() as db:
+                dev = db.execute(
+                    select(Device).where(Device.ftp_user == username)
+                ).scalar_one_or_none()
+                auditar_falha_push(db, dev, ip, motivo="arquivo vazio (0 bytes)",
+                                   protocolo="FTP", nome_arquivo=nome_arquivo)
             return
 
         # Resolve device antes de avaliar limite (UNM2000 tem limite maior).
@@ -224,14 +248,19 @@ class NexusFTPHandler(FTPHandler):
             if tamanho > limite:
                 log.warning("FTP upload de %s rejeitado: tamanho=%s > limite=%s",
                             username, tamanho, limite)
+                auditar_falha_push(
+                    db, dev, ip,
+                    motivo=f"tamanho excedido ({tamanho} bytes > limite {limite})",
+                    protocolo="FTP", nome_arquivo=nome_arquivo,
+                )
                 return
 
             # Preserva nome original do arquivo (pra UNM2000 distinguir qual OLT
             # mandou cada cfg). filepath aqui é o destino completo no disco;
             # basename pega só o nome enviado pelo cliente.
-            nome_arquivo = os.path.basename(filepath)
             conteudo = ler_arquivo_pra_persistir(filepath, nome_arquivo)
-            processar_upload(dev, conteudo, ip, tamanho, db, nome_arquivo=nome_arquivo)
+            processar_upload(dev, conteudo, ip, tamanho, db,
+                             nome_arquivo=nome_arquivo, protocolo="FTP")
             db.commit()
 
 
