@@ -135,19 +135,43 @@ Cada passo emite uma das marcações:
 | `!` (amarelo) | Aviso — geralmente algo que precisa de atenção depois |
 | `✗` (vermelho) | Erro — script aborta com `set -euo pipefail` |
 
-O que ele faz, em ordem:
-1. Locale `pt_BR.UTF-8` + timezone `America/Sao_Paulo`
-2. Instala: git, ufw, fail2ban, chrony, ca-certificates, curl, gnupg, jq
-3. Instala Docker Engine via repo oficial (não o do Debian — versão muito antiga)
-4. Escreve `/etc/docker/daemon.json` com bip `10.17.0.1/24` + pool `10.18.0.0/16`
-5. Adiciona `allow` + `ratelimit` no `chrony.conf`
-6. Cria action `docker-allports`, filter `nexus-ftp`, jail `nexus-ftp` no fail2ban
-7. Configura UFW (allow 2288/80/443/21/22/69/30000-30099 + 123/udp pra RFC1918)
-8. Clona o repo em `/root/NEXUS-BETA` na tag mais recente
-9. Cria `infra/ftp-logs/` e `infra/state/` (host key SFTP persiste aqui)
-10. Gera `.env` com secrets aleatórios + 3 placeholders pra você editar
+O que ele faz, em ordem (8 passos):
+1. **Sistema base** — locale `pt_BR.UTF-8` + timezone `America/Sao_Paulo` + apt deps (git, ufw, fail2ban, chrony, etc.)
+2. **Docker Engine** — repo oficial Docker + `/etc/docker/daemon.json` com `bip 10.17.0.1/24` + pool `10.18.0.0/16` + IPv6
+3. **Clone do repo** — em `/root/NEXUS-BETA` na tag mais recente. **Default: SSH com deploy key** (ver §3.5 abaixo). Pra HTTPS público use `REPO_URL=https://...`
+4. **Diretórios persistentes** — `infra/ftp-logs/ftp-auth.log` e `infra/state/` (criados antes do fail2ban porque o jail `nexus-ftp` precisa do log file existir no startup)
+5. **Chrony NTP** — `allow` RFC1918+RFC6598 + ratelimit. Faixas adicionais via env var `NEXUS_EXTRA_CIDRS=cidr1,cidr2,...`
+6. **Fail2ban** — action `docker-allports` (com bloco `[Init]` definindo `iptables=/usr/sbin/iptables` — necessário em Trixie), filter+jail `nexus-ftp` apontando pro log do passo 4
+7. **UFW** — allow 2288/80/443/21/22/69/30000-30099 + 123/udp pra RFC1918+RFC6598+`NEXUS_EXTRA_CIDRS`, depois `ufw enable`
+8. **`.env`** — secrets gerados (SECRET_KEY/ENCRYPTION_KEY/POSTGRES_PASSWORD via openssl) + 3 placeholders pra você editar
+
+### Variáveis de ambiente opcionais
+
+```bash
+# Faixas adicionais de IP que poderão pedir hora ao NTP (chrony) e passar
+# pelo UFW na 123/udp. Default: nenhuma (só RFC1918+RFC6598).
+NEXUS_EXTRA_CIDRS=200.150.30.0/24,45.7.68.0/22 bash /tmp/install.sh -i
+
+# Override do repo (default git@github.com:vagnerss2011-spec/NEXUS-BETA.git).
+# Use HTTPS se o repo for público:
+REPO_URL=https://github.com/vagnerss2011-spec/NEXUS-BETA.git bash /tmp/install.sh -i
+```
 
 > Se você precisar recriar do zero, apaga `/etc/docker/daemon.json`, `/etc/fail2ban/jail.local`, `/root/NEXUS-BETA` e roda de novo.
+
+### §3.5 — Deploy key SSH (repo privado)
+
+Quando o passo 3 do script roda com `REPO_URL` SSH (default), ele:
+1. Gera `/root/.ssh/nexus_deploy_key` se não existir (ed25519, sem passphrase)
+2. Configura `/root/.ssh/config` pra rotear `github.com` via essa chave
+3. Testa autenticação no GitHub com `ssh -T git@github.com`
+4. Se der "successfully authenticated" → segue
+5. Se der "Permission denied" → mostra a public key na tela e pede pra colar em GitHub → **Settings → Deploy Keys → Add deploy key** (read-only). Aí pressione Enter pra continuar.
+
+A public key fica em `/root/.ssh/nexus_deploy_key.pub`. Pode pegar com:
+```bash
+cat /root/.ssh/nexus_deploy_key.pub
+```
 
 ---
 
@@ -220,12 +244,49 @@ Procure por:
 
 ## §8 — Criar o primeiro usuário admin
 
-Não tem rota pública de signup. Cria direto no banco:
+Não tem rota pública de signup. Cria direto no banco — **via Python no container backend**, NÃO via shell + bcrypt + psql separados.
+
+> ⚠️ **Por que NÃO fazer em 2 passos (gera hash → INSERT via psql):**
+> O hash bcrypt começa com `$2b$12$...`. Se você passa pelo shell, `$2b` e `$12` viram tentativas de expansão de variável — bash come os primeiros 6-8 chars do hash silenciosamente, deixando algo tipo `b2.XRf.` no banco. Login falha com `UnknownHashError: hash could not be identified`.
+
+**Forma correta** — hash + INSERT na mesma sessão Python, zero shell:
 
 ```bash
-docker compose exec db psql -U nexus -d dbnexus <<'SQL'
--- Substitua o e-mail e gere o hash bcrypt da senha primeiro:
---   docker compose exec backend python -c "from passlib.hash import bcrypt; print(bcrypt.hash('SuaSenhaForte'))"
+cd /root/NEXUS-BETA
+
+docker compose exec -T backend python <<'PYEOF'
+import asyncio
+from passlib.hash import bcrypt
+from sqlalchemy import text
+from database import engine
+
+EMAIL = "voce@exemplo.com.br"      # ← TROCA
+NOME  = "Seu Nome"                 # ← TROCA
+SENHA = "SuaSenhaForte"            # ← TROCA (vai ser temporária — força troca no 1o login)
+
+async def main():
+    h = bcrypt.hash(SENHA)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("""INSERT INTO users (nome, email, senha_hash, role, ativo,
+                                       tentativas_falhas, senha_temporaria, criado_em)
+                    VALUES (:n, :e, :h, 'admin', true, 0, true, NOW())"""),
+            {"n": NOME, "e": EMAIL, "h": h}
+        )
+    print(f"INSERT OK — admin {EMAIL} criado")
+
+asyncio.run(main())
+PYEOF
+```
+
+Logado, troca a senha (a flag `senha_temporaria=true` força isso no primeiro acesso).
+
+### Bloco SQL (forma manual — só se você sabe o hash de antemão)
+
+Se você gerar o hash em outro lugar e quiser fazer só o INSERT:
+
+```bash
+docker compose exec -T db psql -U nexus -d dbnexus <<SQL
 INSERT INTO users (nome, email, senha_hash, role, ativo, senha_temporaria)
 VALUES ('Admin', 'admin@exemplo.com.br', '<COLE O HASH AQUI>', 'admin', true, true);
 SQL

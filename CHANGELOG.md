@@ -12,6 +12,29 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.1.2] - 2026-05-10
+
+PATCH com 5 correções no `scripts/install-nexus-backup.sh` descobertas durante a primeira instalação real em VM Debian 13 Trixie limpa (`nexus.camon.net.br`, validada em prod com OLT/UNM2000).
+
+### Corrigido
+
+- **Action `docker-allports` do fail2ban precisa de bloco `[Init]` em Trixie.** Em Debian 13 o pacote `fail2ban 1.1.0` removeu `iptables-common.conf`, então a variável `<iptables>` ficava literal e o shell tentava executar `iptables` como comando relativo — falhava com `cannot open iptables: No such file`. Action agora declara `iptables = /usr/sbin/iptables` em `[Init]`.
+- **Ordem dos passos:** `Clone do repo` (era 6) e `Diretórios persistentes` (era 7) movidos pra **passos 3 e 4**, antes do fail2ban (passo 6 agora). Sem isso, fail2ban 1.1.0 falha o startup ao não encontrar o `infra/ftp-logs/ftp-auth.log` que o jail tail-a (1.1.0 não tolera logpath inexistente, diferente de versões antigas).
+- **Clone via SSH (deploy key)** em vez de HTTPS — repo privado não responde clone HTTPS sem credencial. Script agora gera `~/.ssh/nexus_deploy_key` automaticamente, configura `~/.ssh/config` pra rotear `github.com` via essa chave, testa auth, e se falhar mostra a public key na tela com instrução pra colar em GitHub → Settings → Deploy Keys. Override pra HTTPS via `REPO_URL=https://...`.
+- **Geração de `ENCRYPTION_KEY` agora é openssl-only** (`openssl rand -base64 32 | tr '+/' '-_'`). Era 2-fallback (python3 → docker), frágil em VM nova sem `python3-cryptography`. Resultado byte-equivalente a `Fernet.generate_key()` mas sem deps externas.
+- **Documentação do primeiro admin** atualizada — usa Python no container (hash bcrypt + INSERT via SQLAlchemy na mesma sessão) em vez de gerar hash via shell + INSERT separado via psql. Hash bcrypt começa com `$2b$12$...` e o `$2b`/`$12` viravam expansão de variável no shell, truncando o hash silenciosamente. Sintoma: login falhava com `passlib.exc.UnknownHashError`.
+
+### Adicionado
+
+- **`NEXUS_EXTRA_CIDRS` env var** — CSV de faixas adicionais autorizadas a pedir hora ao chrony (NTP) e a passar pelo UFW na 123/udp. Era `45.5.16.0/22` hardcoded (faixa do provedor antigo). Agora cada instalação passa as próprias faixas: `NEXUS_EXTRA_CIDRS=200.150.30.0/24,45.7.68.0/22 bash install-nexus-backup.sh -i`. Default vazio = só RFC1918+RFC6598.
+- Script detecta bloco antigo `# === NEXUS BACKUP === ` no `chrony.conf` e reescreve idempotentemente (antes era append-only e duplicava as `allow` se rodasse 2x).
+- Script restart o fail2ban com `sleep 2` + check `is-active` pós-restart — antes seguia em frente assumindo OK, mascarando falhas de config.
+
+### Documentação
+
+- `docs/INSTALL.md` — nova subseção `§3.5 — Deploy key SSH (repo privado)` com fluxo de geração automática + add no GitHub.
+- `docs/INSTALL.md §8` — bloco Python pro primeiro admin (anti shell-expansion); SQL puro fica documentado como "forma manual se você gerar o hash em outro lugar".
+
 ## [1.1.1] - 2026-05-10
 
 ### Adicionado
@@ -108,7 +131,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.1...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/releases/tag/v1.0.0
