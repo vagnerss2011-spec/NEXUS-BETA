@@ -357,7 +357,9 @@ export default function Backups() {
                             <td className="px-5 py-3 text-xs text-red-400 max-w-md truncate">{b.erro || '—'}</td>
                             <td className="px-5 py-3 text-right">
                               <div className="flex items-center gap-1 justify-end">
-                                {b.status === 'sucesso' && (
+                                {b.status === 'sucesso' && b.device?.tipo !== 'unm2000' && (
+                                  // UNM2000 envia .zip binario + README — nao faz sentido visualizar
+                                  // como texto. Mantem so o botao de download (preserva nome original).
                                   <button onClick={() => setPreview(b)}
                                     className="p-1.5 text-amber-400 hover:bg-amber-500/20 rounded transition-colors" title="Visualizar conteúdo">
                                     <Eye size={15} />
