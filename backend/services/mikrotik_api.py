@@ -73,19 +73,15 @@ def _connect(device: Device):
 
 
 def _export_via_command(api) -> str | None:
-    """Plano A: tenta `/export` direto. Em alguns firmwares cada linha de
-    config vem como `!re` reply contendo `=ret=<line>` ou `=line=<line>`.
+    """Plano A: tenta `/export` direto via `api(cmd)`. Em alguns firmwares
+    cada linha de config vem como `!re` reply.
 
     Retorna a config como texto ou None se o firmware não suporta esse modo.
     """
     try:
-        # /export sem args; iteramos os replies (não usar list comprehension
-        # com try interno; queremos detectar falha cedo).
-        path = api.path("/export")
+        replies = list(api("/export"))
         linhas = []
-        for row in path:
-            # Diferentes versões do RouterOS expõem chaves diferentes nos
-            # replies do `/export`. Tentamos as conhecidas em ordem.
+        for row in replies:
             for key in ("ret", "line", "message"):
                 if key in row:
                     linhas.append(str(row[key]))
@@ -98,55 +94,66 @@ def _export_via_command(api) -> str | None:
         return None
 
 
+def _find_file(api, nome: str) -> dict | None:
+    """Acha um arquivo pelo nome no /file. Itera linear (não usa Path.select.where
+    porque o where do librouteros 3.4 retorna Query que precisa de fields fixos
+    e dispara confusão de tipos). Loop direto é simples e funciona em qualquer FW."""
+    for row in api("/file/print"):
+        if row.get("name") == nome:
+            return row
+    return None
+
+
 def _export_via_arquivo(api, fabricante: DeviceVendor) -> str:
-    """Plano B: escreve arquivo temp, lê via /file/print detail, deleta.
+    """Plano B: escreve arquivo temp, lê o conteúdo via /file/print, deleta.
 
-    show-sensitive=yes em v7 pra incluir senhas/PSKs no export — v6 já
-    inclui por default e não reconhece esse argumento.
+    show-sensitive=yes em v7 pra incluir senhas/PSKs — v6 já inclui por default
+    e não reconhece esse argumento.
     """
-    nome_tmp = f"nexus-export-{int(time.time())}.rsc"
+    nome_arquivo_base = f"nexus-export-{int(time.time())}"
+    nome_arquivo = f"{nome_arquivo_base}.rsc"
 
-    # Monta args do /export. Mikrotik não tem aceitação consistente de bool
-    # como int 0/1 vs string "yes"/"no" — usamos string que aceita em ambas.
-    export_args: dict = {"file": nome_tmp.removesuffix(".rsc")}
+    # Args do /export. Mikrotik aceita "yes"/"no" como string em todas as versões.
+    export_args: dict = {"file": nome_arquivo_base}
     if fabricante == DeviceVendor.mikrotik_v7:
         export_args["show-sensitive"] = "yes"
 
     try:
-        api.path("/export")(**export_args)
+        list(api("/export", **export_args))
     except Exception as e:
-        # Algumas builds não retornam silenciosamente — re-tenta sem
-        # show-sensitive (degradação: senhas mascaradas em vez de falhar).
+        # Algumas builds não aceitam show-sensitive — re-tenta sem (degradação
+        # graceful: senhas mascaradas em vez de falhar a coleta inteira).
         if "show-sensitive" in export_args:
             log.warning("export com show-sensitive falhou (%s), retentando sem", e)
             export_args.pop("show-sensitive", None)
-            api.path("/export")(**export_args)
+            list(api("/export", **export_args))
         else:
             raise
 
-    # Aguardar até 5s o arquivo aparecer (export é assíncrono em alguns
-    # firmwares — o reply de /export volta antes do flush completo no disco).
+    # Export é assíncrono em alguns firmwares — espera o arquivo aparecer com
+    # conteúdo populado. Limite 5s pra não travar o backup todo se algo der ruim.
     deadline = time.time() + 5.0
-    contents = None
+    arquivo = None
     while time.time() < deadline:
-        files = list(api.path("/file").select("name", "contents").where(name=nome_tmp))
-        if files and files[0].get("contents"):
-            contents = files[0]["contents"]
+        arquivo = _find_file(api, nome_arquivo)
+        if arquivo and arquivo.get("contents"):
             break
         time.sleep(0.3)
 
-    # Cleanup do arquivo temp mesmo se a leitura falhou — não deixa lixo no device.
+    contents = arquivo.get("contents") if arquivo else None
+
+    # Cleanup do arquivo temp — não deixa lixo no device mesmo se a leitura falhou.
     try:
-        for f in api.path("/file").select(".id").where(name=nome_tmp):
-            api.path("/file").remove(f[".id"])
+        if arquivo and ".id" in arquivo:
+            api("/file/remove", **{".id": arquivo[".id"]})
     except Exception:
-        log.exception("falha ao remover arquivo temp %s do device", nome_tmp)
+        log.exception("falha ao remover arquivo temp %s do device", nome_arquivo)
 
     if not contents:
         raise RuntimeError(
-            f"Não foi possível ler o conteúdo do arquivo {nome_tmp} via API "
-            "(.contents vazio). Pode ser limitação do firmware — "
-            "considere usar SSH para este device."
+            f"Não foi possível ler o conteúdo do arquivo {nome_arquivo} via API "
+            "(.contents vazio ou arquivo não apareceu em 5s). Pode ser limitação "
+            "do firmware — considere usar SSH para este device."
         )
     return contents
 

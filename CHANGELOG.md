@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.2] - 2026-05-10
+
+### Corrigido
+
+- **Coleta via API Mikrotik falhava com `Path.__call__() missing 1 required positional argument: 'cmd'`.** O `librouteros==3.4.0` mudou a interface: `api.path('/export')(**kwargs)` não funciona mais — `Path.__call__` exige `cmd` posicional (representando o sub-comando dentro da path). Forma correta é `api('/cmd', **kwargs)` direto, que aceita qualquer comando absoluto. Refatorado `services/mikrotik_api.py` pra usar a API top-level callable em todos os pontos: `_export_via_command`, `_export_via_arquivo` (com `/export`, `/file/print`, `/file/remove`). Substituído `Path.select().where()` por loop linear em `/file/print` no `_find_file` — simples e funciona em qualquer versão do firmware.
+
 ## [1.4.1] - 2026-05-10
 
 ### Corrigido
