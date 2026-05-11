@@ -255,6 +255,63 @@ def _run_huawei_netmiko(device: Device) -> tuple[str, str]:
         return "falha", "Sem resposta do equipamento"
     return "sucesso", cleaned
 
+def _run_zte_netmiko(device: Device) -> tuple[str, str]:
+    """ZTE ZXR10/ZXA10 (C300/C320/C600): igual ao Huawei/Datacom, o send_command
+    do Netmiko quebra com 'Pattern not detected: ZXAN#' quando o hostname da OLT
+    não é o default `ZXAN` (ex.: cliente renomeou pra `OLT-camon`) ou quando o
+    output do running-config é grande o suficiente pra estourar o read_timeout
+    de detecção de prompt. Usa o mesmo loop manual: write_channel +
+    read_channel até idle, paginação manual via space (--More--)."""
+    is_telnet = device.protocolo == Protocolo.telnet
+    conn = {
+        "device_type": "cisco_ios_telnet" if is_telnet else "zte_zxros",
+        "host": _clean_host(device.ip),
+        "port": device.porta,
+        "username": device.usuario_ssh,
+        "timeout": 30,
+        "conn_timeout": 30,
+        "banner_timeout": 20,
+        "blocking_timeout": 60,
+        **_build_auth_kwargs(device),
+    }
+    with ConnectHandler(**conn) as net:
+        # ZTE aceita `terminal length 0` (cisco-like) na maioria dos firmwares;
+        # `screen-length 0` aparece em alguns ZXA10 mais antigos. Tenta os dois
+        # silenciosamente — se um der erro o outro pega.
+        for disable_cmd in ("terminal length 0", "screen-length 0"):
+            try:
+                net.send_command_timing(disable_cmd, delay_factor=2)
+            except Exception:
+                pass
+        net.write_channel("show running-config\n")
+        output = ""
+        start = time.time()
+        last_data = time.time()
+        next_more_search = 0
+        TOTAL_TIMEOUT = 600
+        IDLE_TIMEOUT = 8.0
+        while True:
+            now = time.time()
+            if now - start > TOTAL_TIMEOUT:
+                break
+            chunk = net.read_channel()
+            if chunk:
+                output += chunk
+                last_data = now
+                m = _MORE_RE.search(output, next_more_search)
+                if m:
+                    net.write_channel(" ")
+                    next_more_search = m.end()
+            else:
+                if now - last_data > IDLE_TIMEOUT:
+                    break
+                time.sleep(0.3)
+
+    cleaned = _clean_output(output)
+    if not cleaned.strip():
+        return "falha", "Sem resposta do equipamento"
+    return "sucesso", cleaned
+
 def _run_mikrotik_paramiko(device: Device) -> tuple[str, str]:
     # COMMANDS já mapeia /export e /export show-sensitive por versão.
     # Usado direto via Paramiko porque Netmiko quebra a detecção de prompt
@@ -307,6 +364,9 @@ def run_backup(device: Device) -> tuple[str, str]:
 
         if device.fabricante == DeviceVendor.huawei:
             return _run_huawei_netmiko(device)
+
+        if device.fabricante == DeviceVendor.zte:
+            return _run_zte_netmiko(device)
 
         type_map = DEVICE_TYPES_TELNET if is_telnet else DEVICE_TYPES_SSH
         conn = {

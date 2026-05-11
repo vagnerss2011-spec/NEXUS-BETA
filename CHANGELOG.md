@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.4] - 2026-05-10
+
+### Corrigido
+
+- **Backup SSH de ZTE ZXR10/ZXA10 (C300/C320/C600)** quebrava com `Pattern not detected: 'ZXAN\#' in output` quando o hostname da OLT não era o default `ZXAN` (ex.: cliente renomeou pra `OLT-camon`) ou quando o `show running-config` era grande o suficiente pra estourar o `read_timeout=60` interno do Netmiko na detecção de prompt. Mesma classe de bug que já tinha resolvido pra Huawei/Datacom: `send_command` do Netmiko depende de match de prompt, e prompt dinâmico/output grande arrebenta. Solução: nova função `_run_zte_netmiko` em `ssh_service.py` que usa `write_channel` + `read_channel` em loop com idle timeout (8s) e total timeout (600s), paginando manualmente o `--More--` ZTE via space. Desabilita paginação tentando `terminal length 0` e `screen-length 0` (cobre ZXR10 e ZXA10 mais antigos).
+
 ## [1.2.3] - 2026-05-10
 
 ### Corrigido
