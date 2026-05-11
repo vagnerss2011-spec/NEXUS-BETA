@@ -12,6 +12,24 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.3.0] - 2026-05-10
+
+### Mudança importante
+
+- **Fabricante ZTE renomeado para "ZTE C3XX"** no painel (família C300/C320 com firmware ZXA10), pra diferenciar da nova linha **ZTE C6XX Titan** que tem firmware diferente e ainda não tem suporte. Enum interno permanece `zte` — só o label visível muda.
+- **Backup ZTE C3XX agora suporta APENAS Telnet.** SSH foi removido após sequência de releases (v1.2.4 → v1.2.9) tentar resolver truncamento do `show running-config` em configs com muitas ONUs. Diagnóstico via `ZTE_DEBUG_LOG=1` confirmou que o firmware ZXA10 tem rate-limit/flow-control interno no canal SSH que pausa o stream por mais de 2 min entre seções — coleta sempre retorna parcial mesmo com `IDLE_TIMEOUT=180s`. Telnet não tem essa pausa e foi validado entregando running-config completo (~6200 linhas, terminando em `end`). Quando criar/editar device ZTE no painel, **SSH é escondido do select de protocolo** e ao escolher fabricante ZTE o protocolo é forçado pra Telnet. Backend retorna falha clara `"ZTE C3XX: backup via SSH não é suportado nesta versão..."` se algum device ZTE acabar com protocolo SSH (ex.: criado em versão anterior).
+
+### Adicionado
+
+- **Backend `_run_zte_netmiko`** (v1.2.4): coleta dedicada pra ZTE usando `write_channel`/`read_channel` em loop manual, igual ao Huawei/Datacom — necessário porque `send_command` do Netmiko quebra com `Pattern not detected: 'ZXAN#'` quando o hostname da OLT difere do default ou o output é grande.
+- **Early-exit por linha `end`** no loop de coleta ZTE (v1.2.7): detecta a marca natural de fim do `show running-config` ZTE/Cisco-like e encerra o loop na hora, sem depender de idle timeout.
+- **Driver Telnet dedicado** `zte_zxros_telnet` (v1.2.8): antes usava `cisco_ios_telnet` que auto-envia `terminal width 511` no session_preparation e a ZTE responde `Invalid input`.
+- **Debug opcional via `ZTE_DEBUG_LOG=1`** (v1.2.6): grava stream raw da sessão Netmiko em `/tmp/zte_session_<device_id>.log` no container backend. Mantido na release pra diagnósticos futuros.
+
+### Corrigido
+
+- **Modal "Editar Dispositivo" agora esconde protocolos push (SFTP/FTP/TFTP)** do select de protocolo. Antes, ao editar um device SSH/Telnet, o usuário podia acidentalmente mudar pra push e quebrar a coleta — esses protocolos só fazem sentido no fluxo "Novo via Upload" que tem todo o setup de credencial gerada. Devices que JÁ são push têm o select inteiro escondido na edição (só permitem editar nome, IP, CIDR — não trocar o modo).
+
 ## [1.2.9] - 2026-05-10
 
 ### Corrigido

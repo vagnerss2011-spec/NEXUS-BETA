@@ -10,6 +10,9 @@ const FABRICANTES = ['mikrotik', 'mikrotik_v7', 'huawei', 'ubiquiti', 'intelbras
 const FABRICANTE_LABEL = {
   mikrotik_v7: 'Mikrotik V7',
   vsolutions: 'VSolutions',
+  // ZTE C3XX: família C300/C320/C600 (firmware ZXA10). C6XX Titan é outra
+  // família e ainda não tem suporte — quando entrar, vira fabricante próprio.
+  zte: 'ZTE C3XX',
 }
 function labelFabricante(f) {
   return FABRICANTE_LABEL[f] || f
@@ -231,7 +234,7 @@ copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-intelbras.cfg`,
   zte:       `# ZTE ZXR10 (switch/router — firmware recente):
 copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-zte.cfg
 
-# ZTE ZXA10 OLT (C300/C320/C600 etc.) — sintaxe file-server:
+# ZTE C3XX (ZXA10 família C300/C320 etc.) — sintaxe file-server:
 # Validado em 2026-05-10 com C320. Importante: o "path" é o NOME do arquivo
 # destino (não diretório). NEXUS BACKUP só permite escrita no homedir do user.
 file-server manual-backup cfg server-index 1 ipaddress <SERVIDOR> sftp \\
@@ -1422,12 +1425,21 @@ export default function Devices() {
                     value={form.fabricante}
                     onChange={e => {
                       const fab = e.target.value
-                      setForm(f => ({
-                        ...f,
-                        fabricante: fab,
-                        // Auto-ajusta o tipo quando o fabricante restringe
-                        tipo: FABRICANTE_TIPO_FIXO[fab] || f.tipo,
-                      }))
+                      setForm(f => {
+                        // ZTE C3XX só funciona via Telnet (SSH tem rate-limit
+                        // interno da OLT, validado em v1.2.6/v1.2.9 — coleta
+                        // sempre trunca). Força telnet ao escolher ZTE.
+                        const forcaTelnet = fab === 'zte' && !PUSH_PROTOCOLS.includes(f.protocolo)
+                        return {
+                          ...f,
+                          fabricante: fab,
+                          // Auto-ajusta o tipo quando o fabricante restringe
+                          tipo: FABRICANTE_TIPO_FIXO[fab] || f.tipo,
+                          protocolo: forcaTelnet ? 'telnet' : f.protocolo,
+                          porta: forcaTelnet ? DEFAULT_PORTS.telnet : f.porta,
+                          auth_method: forcaTelnet ? 'password' : f.auth_method,
+                        }
+                      })
                     }}
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
                   >
@@ -1435,7 +1447,7 @@ export default function Devices() {
                   </select>
                 )}
               </div>
-              {modal !== 'new-ftp' && (
+              {modal !== 'new-ftp' && !PUSH_PROTOCOLS.includes(form.protocolo) && (
               <div>
                 <label className="block text-sm text-slate-400 mb-1.5">Protocolo de coleta</label>
                 <div className="flex flex-col gap-2">
@@ -1445,8 +1457,15 @@ export default function Devices() {
                     { p: 'sftp_push', cls: 'text-emerald-300', desc: 'equipamento envia via SFTP (criptografado)' },
                     { p: 'ftp_push',  cls: 'text-violet-300',  desc: 'equipamento envia via FTP (plano)' },
                     { p: 'tftp_push', cls: 'text-orange-300',  desc: 'equipamento envia via TFTP (sem auth)' },
-                  // Push só aparece em modo edição (já tem botão dedicado pro novo)
-                  ].filter(({ p }) => modal === 'new' ? !PUSH_PROTOCOLS.includes(p) : true).map(({ p, cls, desc }) => (
+                  ].filter(({ p }) => {
+                    // Push só aparece via fluxo dedicado "Novo via Upload" — esconde
+                    // de criar/editar SSH/Telnet pra evitar mudança acidental do
+                    // modo de coleta. Quem precisa converter, recria o device.
+                    if (PUSH_PROTOCOLS.includes(p)) return false
+                    // ZTE C3XX: SSH bloqueado (rate-limit interno trunca coleta).
+                    if (form.fabricante === 'zte' && p === 'ssh') return false
+                    return true
+                  }).map(({ p, cls, desc }) => (
                     <label key={p} className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="radio"

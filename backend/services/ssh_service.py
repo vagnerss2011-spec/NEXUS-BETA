@@ -312,14 +312,12 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
         # Procuro apenas nos últimos 200 chars pra performance em output grande.
         _END_RE = re.compile(r"\nend\r?\n")
         # IDLE/TOTAL_TIMEOUT viram fallback pra caso `end` não venha (erro de
-        # comando, conexão derrubada no meio, etc.). IDLE diferente por
-        # protocolo: SSH na ZTE C320 tem rate-limit/flow-control interno mais
-        # agressivo — chega a pausar >2min entre seções `pon-onu-mng` e o resto
-        # da config (username/snmp/ntp etc) em OLT com muitas ONUs. Validado via
-        # session_log: o stream chega completo no Netmiko, mas só depois do
-        # nosso loop ter saído por idle. Telnet não tem essa pausa.
+        # comando, conexão derrubada no meio, etc.). 60s tolera pausas normais
+        # da OLT entre páginas. SSH em ZTE C3XX foi removido em v1.3.0 (rate-
+        # limit interno do firmware impede coleta completa mesmo com idle alto),
+        # então só Telnet roda aqui — e Telnet não tem essa pausa.
         TOTAL_TIMEOUT = 900
-        IDLE_TIMEOUT = 60.0 if is_telnet else 180.0
+        IDLE_TIMEOUT = 60.0
         while True:
             now = time.time()
             if now - start > TOTAL_TIMEOUT:
@@ -398,6 +396,18 @@ def run_backup(device: Device) -> tuple[str, str]:
             return _run_huawei_netmiko(device)
 
         if device.fabricante == DeviceVendor.zte:
+            # ZTE C3XX (família C300/C320/C600) tem rate-limit/flow-control
+            # interno no canal SSH que pausa >2min entre seções de config grande
+            # — validado via session_log em v1.2.6/v1.2.9. O stream chega
+            # completo no Netmiko mas o loop sempre sai por idle timeout antes,
+            # retornando truncado. Telnet não tem essa pausa. Em v1.3.0 SSH foi
+            # bloqueado por aqui pra evitar backup parcial silencioso.
+            if not is_telnet:
+                return "falha", (
+                    "ZTE C3XX: backup via SSH não é suportado nesta versão (rate-limit "
+                    "interno da OLT causa coleta truncada). Altere o protocolo do "
+                    "dispositivo para Telnet."
+                )
             return _run_zte_netmiko(device)
 
         type_map = DEVICE_TYPES_TELNET if is_telnet else DEVICE_TYPES_SSH
