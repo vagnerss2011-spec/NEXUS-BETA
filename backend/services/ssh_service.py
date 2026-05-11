@@ -312,9 +312,14 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
         # Procuro apenas nos últimos 200 chars pra performance em output grande.
         _END_RE = re.compile(r"\nend\r?\n")
         # IDLE/TOTAL_TIMEOUT viram fallback pra caso `end` não venha (erro de
-        # comando, conexão derrubada no meio, etc.). 60s tolera pausas longas.
+        # comando, conexão derrubada no meio, etc.). IDLE diferente por
+        # protocolo: SSH na ZTE C320 tem rate-limit/flow-control interno mais
+        # agressivo — chega a pausar >2min entre seções `pon-onu-mng` e o resto
+        # da config (username/snmp/ntp etc) em OLT com muitas ONUs. Validado via
+        # session_log: o stream chega completo no Netmiko, mas só depois do
+        # nosso loop ter saído por idle. Telnet não tem essa pausa.
         TOTAL_TIMEOUT = 900
-        IDLE_TIMEOUT = 60.0
+        IDLE_TIMEOUT = 60.0 if is_telnet else 180.0
         while True:
             now = time.time()
             if now - start > TOTAL_TIMEOUT:

@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.9] - 2026-05-10
+
+### Corrigido
+
+- **Backup SSH de ZTE C320 ainda truncava (~5820 linhas) mesmo com early-exit por `end` do v1.2.7.** Diagnosticado via `ZTE_DEBUG_LOG=1` (segunda rodada): o stream SSH chega completo no Netmiko (session_log mostra até `end`), mas a OLT C320 **pausa entre 90-120s** no canal SSH entre as seções `pon-onu-mng` (muitas ONUs) e o restante da config — rate-limit/flow-control interno do firmware. Nosso loop saía por `IDLE_TIMEOUT=60s` durante essa pausa, antes do stream final chegar, e o conteúdo aparecia só no session_log do Netmiko via `disconnect()`. Fix: `IDLE_TIMEOUT` agora diferencia por protocolo — `60s` em Telnet (continua bom), `180s` em SSH (cobre a pausa grande da OLT). Telnet validado completo em v1.2.8.
+
 ## [1.2.8] - 2026-05-10
 
 ### Corrigido
