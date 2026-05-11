@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.5] - 2026-05-10
+
+### Corrigido
+
+- **Backup SSH de ZTE C320 vinha incompleto em configs grandes** (~5900 linhas em vez de 20k+). O loop `_run_zte_netmiko` cortava em `IDLE_TIMEOUT=8s`, mas a OLT pausa entre 10-20s por página em runnings grandes pra liberar buffer interno — o loop interpretava a pausa como "fim de saída" e retornava parcial. `IDLE_TIMEOUT` aumentado pra `30s` e `TOTAL_TIMEOUT` de `600s` pra `900s` (15min) pra cobrir configs muito grandes sem corte. Adicionada variante extra `terminal no length` na sequência de desabilitar paginação (cobre firmware ZXA10 com syntax cisco-like estrita).
+
 ## [1.2.4] - 2026-05-10
 
 ### Corrigido

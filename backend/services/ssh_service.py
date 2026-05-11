@@ -276,9 +276,11 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
     }
     with ConnectHandler(**conn) as net:
         # ZTE aceita `terminal length 0` (cisco-like) na maioria dos firmwares;
-        # `screen-length 0` aparece em alguns ZXA10 mais antigos. Tenta os dois
-        # silenciosamente — se um der erro o outro pega.
-        for disable_cmd in ("terminal length 0", "screen-length 0"):
+        # `screen-length 0` aparece em alguns ZXA10 mais antigos; `terminal no
+        # length` é variante extra que aparece em firmware ZXA10 com syntax
+        # cisco-like estrita. Tenta todos silenciosamente — se um falhar o outro
+        # ainda desabilita a paginação.
+        for disable_cmd in ("terminal length 0", "screen-length 0", "terminal no length"):
             try:
                 net.send_command_timing(disable_cmd, delay_factor=2)
             except Exception:
@@ -288,8 +290,12 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
         start = time.time()
         last_data = time.time()
         next_more_search = 0
-        TOTAL_TIMEOUT = 600
-        IDLE_TIMEOUT = 8.0
+        # IDLE_TIMEOUT generoso (30s) porque ZTE C320 com running-config grande
+        # (20k+ linhas) pausa por 10-20s entre páginas pra liberar buffer interno.
+        # Com 8s o loop saía cedo e retornava parcial. TOTAL_TIMEOUT 15min cobre
+        # configs muito grandes (validado: 5900 linhas em ~2min de coleta normal).
+        TOTAL_TIMEOUT = 900
+        IDLE_TIMEOUT = 30.0
         while True:
             now = time.time()
             if now - start > TOTAL_TIMEOUT:
