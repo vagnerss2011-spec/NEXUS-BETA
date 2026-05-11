@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.6] - 2026-05-10
+
+### Adicionado
+
+- **Debug opcional do coletor ZTE via `ZTE_DEBUG_LOG=1` no `.env`** — quando ativo, cada coleta SSH de ZTE grava o stream raw da sessão Netmiko (todo input/output da OLT) em `/tmp/zte_session_<device_id>.log` dentro do container backend. Sobrescreve a cada coleta. Usado pra diagnosticar coleta incompleta — após v1.2.5, configs ZTE C320 grandes ainda vinham truncadas em ~5900 linhas (esperado 20k+) sem exception no backend, indicando que o loop de paginação manual está travando num formato de `--More--` que o regex `_MORE_RE` não captura. Manter desligado em prod normal (verboso, escreve no disco a cada backup).
+
 ## [1.2.5] - 2026-05-10
 
 ### Corrigido

@@ -1,4 +1,5 @@
 import re
+import os
 import time
 import io
 import paramiko
@@ -274,6 +275,13 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
         "blocking_timeout": 60,
         **_build_auth_kwargs(device),
     }
+    # Debug opcional: `ZTE_DEBUG_LOG=1` no .env grava o stream raw da sessão
+    # Netmiko (tudo que vai/volta da OLT) em /tmp/zte_session_<device_id>.log.
+    # Usado pra diagnosticar coleta incompleta — ver onde o loop paginação trava.
+    # Sobrescreve a cada coleta (não acumula). Manter desligado em prod normal.
+    if os.environ.get("ZTE_DEBUG_LOG") == "1":
+        conn["session_log"] = f"/tmp/zte_session_{device.id}.log"
+        conn["session_log_file_mode"] = "write"
     with ConnectHandler(**conn) as net:
         # ZTE aceita `terminal length 0` (cisco-like) na maioria dos firmwares;
         # `screen-length 0` aparece em alguns ZXA10 mais antigos; `terminal no
