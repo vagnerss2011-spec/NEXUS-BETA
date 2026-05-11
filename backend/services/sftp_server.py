@@ -95,7 +95,11 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
             dev = db.execute(
                 select(Device).where(Device.ftp_user == username)
             ).scalar_one_or_none()
-            if not dev or not dev.ativo or dev.protocolo != Protocolo.sftp_push or not dev.ftp_senha_enc:
+            # Aceita protocolo sftp_push (fluxo push original) E api (Mikrotik
+            # que recebe /tool/fetch upload do backend pra empurrar o /export).
+            # Em ambos, ftp_user/ftp_senha são auto-gerados ao criar o device.
+            protocolos_aceitos = (Protocolo.sftp_push, Protocolo.api)
+            if not dev or not dev.ativo or dev.protocolo not in protocolos_aceitos or not dev.ftp_senha_enc:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", self.client_ip, username)
                 auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=None,
                                       detalhe="usuário SFTP inexistente ou device desabilitado",
@@ -111,7 +115,12 @@ class NexusSSHServerInterface(paramiko.ServerInterface):
                 auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=dev.empresa_id,
                                       detalhe="senha incorreta", protocolo="SFTP")
                 return paramiko.AUTH_FAILED
-            if not _ip_match(self.client_ip, dev.ftp_origem_cidr):
+            # Whitelist IP só vale pra sftp_push (fluxo onde o admin configura
+            # explicitamente o CIDR de origem). Pra protocolo=api, o backend
+            # dispara o upload sob demanda — origem pode ser qualquer IP
+            # roteável que o Mikrotik tenha (LAN, túnel, NAT) e a credencial
+            # única gerada por device já garante autorização.
+            if dev.protocolo == Protocolo.sftp_push and not _ip_match(self.client_ip, dev.ftp_origem_cidr):
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", self.client_ip, username)
                 auditar_acesso_negado(db, self.client_ip, alvo_nome=username, empresa_id=dev.empresa_id,
                                       detalhe=f"IP {self.client_ip} fora da whitelist {dev.ftp_origem_cidr}",

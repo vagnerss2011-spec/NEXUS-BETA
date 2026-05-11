@@ -12,20 +12,27 @@ Why API binária e não REST:
 Formato do backup: `/export` texto (igual ao SSH atual), pra manter
 compatibilidade dos backups históricos do mesmo device.
 
-Caminho de coleta:
+Caminho de coleta (3 planos em cascata):
 1. Plano A — `/export` direto via API: alguns firmwares retornam o output
-   como sequência de replies. Validado em runtime via try/except.
-2. Plano B — escreve arquivo temp na OLT, lê via `/file/print detail`
-   (`.contents`), e remove. Funciona em firmwares onde Plano A não devolve
-   linhas via API.
+   como sequência de replies. Mais rápido quando funciona.
+2. Plano B — `/export file=tmp` + `/file/print` lê `.contents`. Tem limite
+   de ~4KB no Mikrotik (firmware trunca o atributo `.contents`); só serve
+   pra configs pequenas.
+3. Plano C — `/export file=tmp` + `/tool/fetch upload=yes mode=sftp` faz
+   o Mikrotik enviar o arquivo pro nosso SFTP server usando credencial
+   auto-gerada no device. Funciona pra arquivos de qualquer tamanho.
 """
+import os
 import ssl
 import time
 import logging
 from typing import Tuple
 
-from models import Device, DeviceVendor
+from sqlalchemy import select
+from models import Device, DeviceVendor, Protocolo, Backup
 from services.crypto import decrypt
+from config import settings
+from services.push_backup import SyncSessionLocal
 
 log = logging.getLogger(__name__)
 
@@ -115,25 +122,46 @@ def _find_file(api, nome: str) -> dict | None:
     return None
 
 
-def _export_via_arquivo(api, fabricante: DeviceVendor) -> str:
-    """Plano B: escreve arquivo temp, lê o conteúdo via /file/print, deleta.
+def _export_via_upload_sftp(api, device: Device) -> str:
+    """Plano C: faz o Mikrotik gerar /export file=tmp.rsc e usar /tool/fetch
+    upload=yes mode=sftp pra empurrar o arquivo pro nosso SFTP server.
 
-    show-sensitive=yes em v7 pra incluir senhas/PSKs — v6 já inclui por default
-    e não reconhece esse argumento.
+    Usa cred SFTP auto-gerada do device (Device.ftp_user + ftp_senha_enc).
+    Pipeline normal de push processa o arquivo e cria backup no banco;
+    pollamos a tabela `backups` esperando esse backup novo aparecer, lemos
+    o conteúdo, deletamos esse backup (pra evitar duplicação) e retornamos
+    o conteúdo pro caller criar backup com origem='manual' como nos outros
+    fluxos.
+
+    Por que esse "deleta-e-retorna" em vez de retornar status-só:
+    - Caller (routers/backups.py) sempre cria um Backup com o tupple
+      (status, conteudo). Se retornássemos "sucesso, async", precisaria
+      ajustar toda a chain. Tem o pequeno custo de uma row a mais por
+      poucos ms no banco, mas é transparente pro resto do código.
     """
-    nome_arquivo_base = f"nexus-export-{int(time.time())}"
-    nome_arquivo = f"{nome_arquivo_base}.rsc"
+    if not device.ftp_user or not device.ftp_senha_enc:
+        raise RuntimeError(
+            "Device API sem credencial SFTP gerada (ftp_user/ftp_senha). "
+            "Recadastre o device — em v1.4.4+ a cred é gerada automaticamente."
+        )
+    if not settings.FTP_MASQUERADE_ADDRESS:
+        raise RuntimeError(
+            "FTP_MASQUERADE_ADDRESS não configurado no .env. "
+            "Sem isso o Mikrotik não tem endereço pra enviar o backup."
+        )
 
-    # Args do /export. Mikrotik aceita "yes"/"no" como string em todas as versões.
-    export_args: dict = {"file": nome_arquivo_base}
-    if fabricante == DeviceVendor.mikrotik_v7:
+    senha_sftp = decrypt(device.ftp_senha_enc)
+    nome_base = f"nexus-api-{device.id}-{int(time.time())}"
+    nome_rsc = f"{nome_base}.rsc"
+    nome_destino = f"backup-api-{device.id}-{int(time.time())}.rsc"
+
+    # 1) Gera o /export no /file do Mikrotik. Args iguais ao Plano B.
+    export_args: dict = {"file": nome_base}
+    if device.fabricante == DeviceVendor.mikrotik_v7:
         export_args["show-sensitive"] = "yes"
-
     try:
         list(api("/export", **export_args))
     except Exception as e:
-        # Algumas builds não aceitam show-sensitive — re-tenta sem (degradação
-        # graceful: senhas mascaradas em vez de falhar a coleta inteira).
         if "show-sensitive" in export_args:
             log.warning("export com show-sensitive falhou (%s), retentando sem", e)
             export_args.pop("show-sensitive", None)
@@ -141,44 +169,87 @@ def _export_via_arquivo(api, fabricante: DeviceVendor) -> str:
         else:
             raise
 
-    # Export é assíncrono em alguns firmwares — espera o arquivo aparecer com
-    # conteúdo populado. Timeout generoso (30s) cobre routers com disco lento
-    # ou com export grande. Antes era 5s e era estourado em CRS328-Asa_Norte.
-    deadline = time.time() + 30.0
-    arquivo = None
+    # 2) Snapshot do último backup ID antes do upload — pra detectar qual
+    # backup é o "novo" criado pela pipeline SFTP (push).
+    with SyncSessionLocal() as db:
+        ultimo_antes = db.execute(
+            select(Backup.id).where(Backup.device_id == device.id)
+            .order_by(Backup.id.desc()).limit(1)
+        ).scalar_one_or_none() or 0
+
+    # 3) Dispara /tool/fetch upload=yes mode=sftp pro nosso server.
+    fetch_args = {
+        "upload": "yes",
+        "mode": "sftp",
+        "address": settings.FTP_MASQUERADE_ADDRESS,
+        "port": "22",
+        "user": device.ftp_user,
+        "password": senha_sftp,
+        "src-path": nome_rsc,
+        "dst-path": nome_destino,
+    }
+    try:
+        list(api("/tool/fetch", **fetch_args))
+    except Exception as e:
+        # Cleanup do arquivo temp no Mikrotik antes de levantar.
+        _try_remove_file(api, nome_rsc)
+        raise RuntimeError(f"Falha no /tool/fetch upload pro SFTP do NEXUS: {e}")
+
+    # 4) Polla a tabela backups por backup novo (criado pela pipeline SFTP)
+    # com timeout generoso. Pipeline normal é rápida (segundos), mas dev em
+    # rede lenta / arquivo grande pode demorar mais.
+    deadline = time.time() + 60.0
+    backup_novo_id = None
+    backup_conteudo = None
     while time.time() < deadline:
-        arquivo = _find_file(api, nome_arquivo)
-        if arquivo and arquivo.get("contents"):
-            break
+        with SyncSessionLocal() as db:
+            row = db.execute(
+                select(Backup.id, Backup.conteudo, Backup.status)
+                .where(Backup.device_id == device.id, Backup.id > ultimo_antes)
+                .order_by(Backup.id.desc()).limit(1)
+            ).first()
+            if row:
+                backup_novo_id = row[0]
+                backup_conteudo = row[1] if row[2] == "sucesso" else None
+                break
         time.sleep(0.5)
 
-    contents = arquivo.get("contents") if arquivo else None
-    size_no_disco = arquivo.get("size") if arquivo else None
+    # 5) Cleanup do arquivo temp no Mikrotik (a essa altura ele já foi
+    # uploadado; remoção é responsabilidade nossa pra não deixar lixo).
+    _try_remove_file(api, nome_rsc)
 
-    # Cleanup do arquivo temp — não deixa lixo no device mesmo se a leitura falhou.
-    try:
-        if arquivo and ".id" in arquivo:
-            api("/file/remove", **{".id": arquivo[".id"]})
-    except Exception:
-        log.exception("falha ao remover arquivo temp %s do device", nome_arquivo)
-
-    if not contents:
-        # Diagnóstico específico ajuda a escolher entre "esperar mais" e "trocar
-        # de protocolo": se o arquivo existe com size > 0, o `.contents` foi
-        # limitado pelo firmware (Mikrotik trunca em ~4KB em /file/print).
-        if arquivo and size_no_disco:
-            raise RuntimeError(
-                f"Arquivo {nome_arquivo} criado ({size_no_disco} bytes) mas "
-                "`.contents` veio vazio — firmware limita conteúdo retornado "
-                "via API. Use SSH para este device, ou aumente o limite via "
-                "config do RouterOS."
-            )
+    if backup_novo_id is None:
         raise RuntimeError(
-            f"Arquivo {nome_arquivo} não apareceu em 30s após /export. "
-            "Verifique permissões do usuário (precisa de policy 'read,sensitive') "
-            "ou trate o device via SSH."
+            f"/tool/fetch disparado mas backup não chegou em 60s. Possíveis "
+            f"causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:22, "
+            "firewall do NEXUS bloqueando, ou cred SFTP incorreta. Verifique "
+            "logs do SFTP server."
         )
-    return contents
+    if not backup_conteudo:
+        # Apaga o row de falha antes de levantar pra não duplicar com a falha
+        # que vai vir pelo caller.
+        with SyncSessionLocal() as db:
+            db.execute(Backup.__table__.delete().where(Backup.id == backup_novo_id))
+            db.commit()
+        raise RuntimeError("Backup chegou via SFTP mas marcado como falha pela pipeline (arquivo vazio/corrompido).")
+
+    # 6) Apaga o backup que a pipeline criou pra evitar duplicação — o caller
+    # vai criar novo Backup com origem='manual' usando o conteúdo retornado.
+    with SyncSessionLocal() as db:
+        db.execute(Backup.__table__.delete().where(Backup.id == backup_novo_id))
+        db.commit()
+
+    return backup_conteudo
+
+
+def _try_remove_file(api, nome: str) -> None:
+    """Remove arquivo do /file no Mikrotik silenciosamente."""
+    try:
+        arq = _find_file(api, nome)
+        if arq and ".id" in arq:
+            api("/file/remove", **{".id": arq[".id"]})
+    except Exception:
+        log.exception("falha ao remover arquivo temp %s do device", nome)
 
 
 def run_backup_via_api(device: Device) -> Tuple[str, str]:
@@ -196,15 +267,20 @@ def run_backup_via_api(device: Device) -> Tuple[str, str]:
         return "falha", f"Falha na conexão API Mikrotik: {e}"
 
     try:
-        # Plano A
+        # Plano A — /export direto via API (mais rápido quando funciona)
         texto = _export_via_command(api)
         if texto and texto.strip():
             return "sucesso", texto
-        # Plano B (fallback)
-        texto = _export_via_arquivo(api, device.fabricante)
+
+        # Plano C — upload SFTP iniciado pelo Mikrotik. Pula o Plano B (file/print
+        # .contents) porque ele tem limite de ~4KB no firmware Mikrotik que
+        # quebra silenciosamente em configs maiores. O Plano C é robusto pra
+        # arquivos de qualquer tamanho — exige só FTP_MASQUERADE_ADDRESS
+        # configurado no .env e cred SFTP gerada no device (auto desde v1.4.4).
+        texto = _export_via_upload_sftp(api, device)
         if texto and texto.strip():
             return "sucesso", texto
-        return "falha", "Export retornou vazio (firmware pode não suportar export via API)."
+        return "falha", "Export retornou vazio em todos os planos (A: vazio; C: arquivo recebido vazio)."
     except Exception as e:
         return "falha", f"Erro coletando export via API: {e}"
     finally:

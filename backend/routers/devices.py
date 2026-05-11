@@ -161,8 +161,11 @@ async def criar_device(
     ftp_origem_cidr = None
     PUSH_PROTOCOLS = (Protocolo.ftp_push, Protocolo.sftp_push, Protocolo.tftp_push)
     is_push = data.protocolo in PUSH_PROTOCOLS
+    is_api = data.protocolo == Protocolo.api
     # FTP/SFTP geram credencial (user+senha); TFTP não tem auth.
-    gera_credencial = data.protocolo in (Protocolo.ftp_push, Protocolo.sftp_push)
+    # API Mikrotik também gera cred SFTP — pra o Mikrotik fazer upload do .rsc
+    # depois do /export. Sem cred, o Plano C de coleta (upload-via-fetch) não roda.
+    gera_credencial = data.protocolo in (Protocolo.ftp_push, Protocolo.sftp_push, Protocolo.api)
     is_tftp = data.protocolo == Protocolo.tftp_push
 
     # UNM2000 é receptor passivo (EMS Set Backup Server) — só FTP/SFTP push.

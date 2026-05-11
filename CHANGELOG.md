@@ -12,6 +12,18 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.4] - 2026-05-11
+
+### Adicionado
+
+- **Plano C de coleta API Mikrotik: upload SFTP iniciado pelo equipamento.** Substitui o Plano B (que dependia do atributo `.contents` em `/file/print`, limitado a ~4KB pelo firmware). Fluxo: backend conecta via API → `/export file=tmp.rsc` no Mikrotik → backend dispara `/tool/fetch upload=yes mode=sftp address=<NEXUS> port=22 user=<gerado> password=<gerado>` → Mikrotik conecta no SFTP server interno do NEXUS e empurra o arquivo → pipeline padrão de push processa → backup criado. `run_backup_via_api` polla o banco esperando esse backup (timeout 60s), lê o conteúdo, deleta o row do push (pra evitar duplicação) e retorna o conteúdo pro caller criar Backup normal com origem='manual'. Resolve o problema de `.contents` vazio em configs grandes (CRS328 e similares).
+- **Auto-gerar credencial SFTP em devices com protocolo=api**: ao criar, backend gera `ftp_user` + `ftp_senha_enc` (mesmo fluxo do `sftp_push`). UI já mostra a senha em texto puro UMA VEZ na resposta da criação (modal genérico de credencial reaproveitado). Necessário pro Plano C — Mikrotik usa essa cred pra fazer o upload.
+- **SFTP server aceita protocolo=api**: além de `sftp_push`. Whitelist de IP de origem é pulada quando `protocolo=api` (o admin não pré-cadastra CIDR no fluxo API — o backend dispara o upload sob demanda e a credencial única por device já garante autorização).
+
+### Removido
+
+- **Plano B (`_export_via_arquivo`)** que lia `.contents` de `/file/print`. Era frágil (limite ~4KB do firmware) e sempre falhava em configs reais. Plano A (export direto) cobre configs pequenas; Plano C (upload SFTP) cobre todo o resto.
+
 ## [1.4.3] - 2026-05-11
 
 ### Corrigido
