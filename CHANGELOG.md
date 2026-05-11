@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.3.4] - 2026-05-10
+
+### Corrigido
+
+- **Escudo do logo aparecia deslocado pra esquerda** em relação ao título `NEXUS BACKUP` no Login, mesmo com `mx-auto`. Causa: centro de massa visual do escudo na imagem original ficava 134px à esquerda do centro geométrico do canvas — `mx-auto` centraliza a IMAGEM mas não o conteúdo dentro dela. Fix: regenerar assets calculando o centro de massa do alpha (numpy) e expandindo o canvas pra que o escudo fique simetricamente posicionado dentro do PNG. Agora `mx-auto` resulta em escudo visualmente alinhado com o h1.
+
 ## [1.3.3] - 2026-05-10
 
 ### Corrigido
