@@ -197,6 +197,11 @@ def _export_via_upload_ftp(api, device: Device) -> str:
         _pending_api_uploads[device.id] = fila
 
     try:
+        # 1.5) Cleanup de qualquer nexus-api-*.rsc órfão antes de criar novo —
+        # protege a memória NAND do Mikrotik contra acúmulo de coletas que
+        # falharam no meio (timeout no fetch, erro de rede etc).
+        _cleanup_orfaos_nexus(api)
+
         # 2) Gera o /export no /file do Mikrotik.
         export_args: dict = {"file": nome_base}
         if device.fabricante == DeviceVendor.mikrotik_v7:
@@ -268,6 +273,90 @@ def _try_remove_file(api, nome: str) -> None:
             api("/file/remove", **{".id": arq[".id"]})
     except Exception:
         log.exception("falha ao remover arquivo temp %s do device", nome)
+
+
+def _cleanup_orfaos_nexus(api) -> int:
+    """Remove TODOS os arquivos `nexus-api-*.rsc` do /file do Mikrotik.
+
+    Chamado antes de criar arquivo novo no Plano C — protege contra acúmulo
+    de órfãos quando coletas anteriores falharam no meio do caminho (timeout
+    no fetch, erro de rede, etc.) e o cleanup do try/finally não rodou.
+    Memória NAND do Mikrotik é pequena (16-64 MB típicos), config grande
+    + dezenas de órfãos pode bater o limite.
+
+    Retorna número de arquivos removidos pra log.
+    """
+    removidos = 0
+    try:
+        for row in list(api("/file/print")):
+            name = row.get("name", "")
+            if name.startswith("nexus-api-") and name.endswith(".rsc"):
+                file_id = row.get(".id")
+                if not file_id:
+                    continue
+                try:
+                    api("/file/remove", **{".id": file_id})
+                    removidos += 1
+                except Exception:
+                    log.warning("falha removendo orfao %s", name)
+    except Exception:
+        log.exception("falha no cleanup de orfaos nexus-api-*")
+    if removidos:
+        log.info("Plano C: removidos %d arquivos orfaos nexus-api-*.rsc", removidos)
+    return removidos
+
+
+def aplicar_config_padrao(device: Device) -> tuple[bool, str]:
+    """Aplica NTP cliente (apontando pro nosso server) + timezone via API.
+
+    Idempotente — se já está configurado igual, RouterOS não dá erro.
+    Best-effort: caller deve tratar exception/false sem hard fail (o backup
+    não precisa disso pra funcionar).
+
+    Chamado após criação do device API (uma vez). NÃO chamado em todo backup
+    pra evitar mexer em config do equipamento sem ação consciente do admin.
+    """
+    if not settings.FTP_MASQUERADE_ADDRESS:
+        return False, "FTP_MASQUERADE_ADDRESS vazio — sem endereço pro NTP."
+
+    try:
+        api = _connect(device)
+    except Exception as e:
+        return False, f"conexão API falhou: {e}"
+
+    erros = []
+    try:
+        # Timezone — sintaxe igual em v6 e v7.
+        try:
+            api("/system/clock/set", **{
+                "time-zone-name": "America/Sao_Paulo",
+                "time-zone-autodetect": "no",
+            })
+        except Exception as e:
+            erros.append(f"timezone: {e}")
+
+        # NTP — v7 usa `servers=`, v6 usa `primary-ntp=`. Tenta v7 primeiro;
+        # se firmware não reconhecer, cai pra v6. Idempotente em ambas.
+        try:
+            api("/system/ntp/client/set",
+                enabled="yes",
+                servers=settings.FTP_MASQUERADE_ADDRESS)
+        except Exception:
+            try:
+                api("/system/ntp/client/set",
+                    enabled="yes",
+                    **{"primary-ntp": settings.FTP_MASQUERADE_ADDRESS})
+            except Exception as e:
+                erros.append(f"ntp: {e}")
+    finally:
+        try:
+            api.close()
+        except Exception:
+            pass
+
+    if erros:
+        return False, "; ".join(erros)
+    return True, f"NTP={settings.FTP_MASQUERADE_ADDRESS}, timezone=America/Sao_Paulo"
 
 
 def run_backup_via_api(device: Device) -> Tuple[str, str]:

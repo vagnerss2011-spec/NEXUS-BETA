@@ -12,6 +12,16 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.7] - 2026-05-11
+
+### Adicionado
+
+- **Cleanup de arquivos órfãos `nexus-api-*.rsc`** no `/file/` do Mikrotik antes de cada Plano C. Protege contra acúmulo na memória NAND do device (16-64 MB típicos) quando coletas anteriores falham no meio do caminho — timeout no `/tool/fetch`, erro de rede, etc — e o cleanup do try/finally não rodou. Roda sempre no início, idempotente, loga quantos arquivos foram removidos.
+- **Aplicação automática de NTP cliente + timezone na criação de device API**. Quando um device com protocolo=api é cadastrado, abre conexão API e aplica:
+  - `time-zone-name=America/Sao_Paulo time-zone-autodetect=no`
+  - `ntp client enabled=yes` com `servers=<FTP_MASQUERADE_ADDRESS>` (v7) ou `primary-ntp=...` (v6) — tenta v7 primeiro, fallback automático pra v6.
+  - Best-effort: se falhar (device offline, permissão), loga warning mas não bloqueia a criação. Roda com timeout 15s em thread separada pra não travar o request. Aplica só na CRIAÇÃO — não em todo backup — pra não mexer em config do device sem ação consciente do admin.
+
 ## [1.4.6] - 2026-05-11
 
 ### Corrigido

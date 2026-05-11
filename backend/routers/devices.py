@@ -12,8 +12,11 @@ from services import audit
 from paramiko.ssh_exception import SSHException
 from ipaddress import ip_network
 from typing import List, Optional
+import logging
 import secrets
 import string
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 
@@ -234,6 +237,23 @@ async def criar_device(
         alvo_tipo="device", alvo_nome=device.nome,
         detalhe=f"{device.tipo.value} · {device.fabricante.value} · {device.ip}",
     )
+
+    # Device API: aplica NTP cliente (apontando pro nosso server) + timezone
+    # Sao_Paulo na sessão API. Best-effort — se falhar (Mikrotik offline,
+    # permissão insuficiente, etc.), loga aviso mas não bloqueia a criação.
+    # Roda em thread separada pra não travar o request com socket sync.
+    if is_api:
+        import asyncio as _asyncio
+        from services.mikrotik_api import aplicar_config_padrao
+        try:
+            ok, msg = await _asyncio.wait_for(
+                _asyncio.to_thread(aplicar_config_padrao, device),
+                timeout=15.0,
+            )
+            log.info("Device %s: aplicar_config_padrao ok=%s msg=%s", device.id, ok, msg)
+        except Exception as e:
+            log.warning("Device %s: aplicar_config_padrao exception: %s", device.id, e)
+
     out = DeviceOut.model_validate(device)
     if ftp_senha_plain:
         # Devolve a senha em texto puro UMA ÚNICA VEZ — frontend mostra com aviso
