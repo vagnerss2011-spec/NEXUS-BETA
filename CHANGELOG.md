@@ -12,6 +12,17 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.3] - 2026-05-11
+
+### Corrigido
+
+- **Coleta API Mikrotik intermitente em CRS328 e routers com disco lento.** Plano B (`/export file=tmp` + ler arquivo) tinha timeout de 5s pro arquivo aparecer com conteúdo populado — insuficiente em alguns firmwares. Aumentado pra **30s** com poll a cada 500ms. Mensagem de erro agora distingue dois casos: (1) arquivo nunca apareceu (problema de permissão ou timeout maior); (2) arquivo apareceu com size>0 mas `.contents` veio vazio (firmware Mikrotik limita conteúdo retornado via API — geralmente >4KB).
+- **Diagnóstico do Plano A** (`/export` direto via API): quando vier 0 replies ou replies sem chaves conhecidas (`ret`/`line`/`message`), agora loga `WARNING` com chaves observadas no reply pra ajudar diagnóstico de firmwares específicos. Antes caía silencioso pro Plano B sem rastro.
+
+### Sabidos
+
+- Erro `not enough permissions (9)` no `/export` via API significa que o usuário do Mikrotik está num grupo sem permissão de leitura sensível. Solução: criar grupo customizado (`/user group add name=nexus-backup policy=read,test,sensitive,api`) e atribuir esse grupo ao usuário de backup. Grupo `read` default NÃO inclui `sensitive`.
+
 ## [1.4.2] - 2026-05-10
 
 ### Corrigido

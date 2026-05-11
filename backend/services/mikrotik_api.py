@@ -77,9 +77,14 @@ def _export_via_command(api) -> str | None:
     cada linha de config vem como `!re` reply.
 
     Retorna a config como texto ou None se o firmware não suporta esse modo.
+    Quando vier vazio/no formato inesperado, loga as chaves observadas pra
+    facilitar diagnóstico de firmwares específicos.
     """
     try:
         replies = list(api("/export"))
+        if not replies:
+            log.warning("Plano A /export: 0 replies — firmware não retorna via API")
+            return None
         linhas = []
         for row in replies:
             for key in ("ret", "line", "message"):
@@ -87,10 +92,16 @@ def _export_via_command(api) -> str | None:
                     linhas.append(str(row[key]))
                     break
         if not linhas:
+            chaves = sorted({k for r in replies[:20] for k in r.keys()})
+            log.warning(
+                "Plano A /export: %d replies mas nenhuma chave conhecida (ret/line/message). "
+                "Chaves observadas: %s. Caindo pro Plano B.",
+                len(replies), chaves
+            )
             return None
         return "\n".join(linhas)
     except Exception as e:
-        log.info("export via API direto falhou (esperado em alguns firmwares): %s", e)
+        log.info("Plano A /export falhou (esperado em alguns firmwares): %s", e)
         return None
 
 
@@ -131,16 +142,18 @@ def _export_via_arquivo(api, fabricante: DeviceVendor) -> str:
             raise
 
     # Export é assíncrono em alguns firmwares — espera o arquivo aparecer com
-    # conteúdo populado. Limite 5s pra não travar o backup todo se algo der ruim.
-    deadline = time.time() + 5.0
+    # conteúdo populado. Timeout generoso (30s) cobre routers com disco lento
+    # ou com export grande. Antes era 5s e era estourado em CRS328-Asa_Norte.
+    deadline = time.time() + 30.0
     arquivo = None
     while time.time() < deadline:
         arquivo = _find_file(api, nome_arquivo)
         if arquivo and arquivo.get("contents"):
             break
-        time.sleep(0.3)
+        time.sleep(0.5)
 
     contents = arquivo.get("contents") if arquivo else None
+    size_no_disco = arquivo.get("size") if arquivo else None
 
     # Cleanup do arquivo temp — não deixa lixo no device mesmo se a leitura falhou.
     try:
@@ -150,10 +163,20 @@ def _export_via_arquivo(api, fabricante: DeviceVendor) -> str:
         log.exception("falha ao remover arquivo temp %s do device", nome_arquivo)
 
     if not contents:
+        # Diagnóstico específico ajuda a escolher entre "esperar mais" e "trocar
+        # de protocolo": se o arquivo existe com size > 0, o `.contents` foi
+        # limitado pelo firmware (Mikrotik trunca em ~4KB em /file/print).
+        if arquivo and size_no_disco:
+            raise RuntimeError(
+                f"Arquivo {nome_arquivo} criado ({size_no_disco} bytes) mas "
+                "`.contents` veio vazio — firmware limita conteúdo retornado "
+                "via API. Use SSH para este device, ou aumente o limite via "
+                "config do RouterOS."
+            )
         raise RuntimeError(
-            f"Não foi possível ler o conteúdo do arquivo {nome_arquivo} via API "
-            "(.contents vazio ou arquivo não apareceu em 5s). Pode ser limitação "
-            "do firmware — considere usar SSH para este device."
+            f"Arquivo {nome_arquivo} não apareceu em 30s após /export. "
+            "Verifique permissões do usuário (precisa de policy 'read,sensitive') "
+            "ou trate o device via SSH."
         )
     return contents
 
