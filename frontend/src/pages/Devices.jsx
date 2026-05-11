@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle, Key, KeyRound, Upload, Copy, RefreshCw } from 'lucide-react'
+import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, FileText, Search, Eye, EyeOff, AlertTriangle, Key, KeyRound, Upload, Copy, RefreshCw, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -520,6 +520,31 @@ const formatHostPort = (ip, porta) => {
 }
 const formatDeviceId = (id) => String(id).padStart(5, '0')
 
+// Cabeçalho de tabela clicável que dispara troca de ordenação.
+// Mostra ChevronsUpDown (cinza, sutil) quando coluna não-ativa, e
+// ArrowUp/ArrowDown (sky) quando é a coluna ordenada — sinaliza ao usuário
+// onde ele clicou e em qual direção. Hover muda cor pra reforçar que é clicável.
+function ThOrdenavel({ coluna, label, ordenarPor, direcao, onClick, align = 'left' }) {
+  const ativa = ordenarPor === coluna
+  const Icon = ativa ? (direcao === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown
+  return (
+    <th
+      onClick={() => onClick(coluna)}
+      className={`px-5 py-3 font-medium cursor-pointer transition-colors hover:text-white ${
+        ativa ? 'text-sky-300' : ''
+      } ${align === 'right' ? 'text-right' : ''}`}
+      title={ativa
+        ? `Ordenado por ${label} ${direcao === 'asc' ? '(crescente)' : '(decrescente)'} — clique pra inverter`
+        : `Ordenar por ${label}`}
+    >
+      <span className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : ''}`}>
+        {label}
+        <Icon size={13} className={ativa ? 'text-sky-400' : 'text-slate-600'} />
+      </span>
+    </th>
+  )
+}
+
 export default function Devices() {
   const [devices, setDevices] = useState([])
   const [modal, setModal] = useState(null)
@@ -620,6 +645,22 @@ export default function Devices() {
     setFiltroStatus('todos')
     setOrdenarPor('id')
     setDirecao('desc')
+  }
+
+  // Direção inicial quando o usuário clica numa coluna ainda não ativa.
+  // Pra ID e "Último backup" o esperado é o mais novo no topo (desc);
+  // pras colunas de texto o alfabético natural (asc).
+  const DIRECAO_INICIAL = {
+    id: 'desc', nome: 'asc', tipo: 'asc', fabricante: 'asc',
+    protocolo: 'asc', ativo: 'asc', ultimo_backup: 'desc',
+  }
+  function toggleOrdenacao(coluna) {
+    if (ordenarPor === coluna) {
+      setDirecao(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setOrdenarPor(coluna)
+      setDirecao(DIRECAO_INICIAL[coluna] || 'asc')
+    }
   }
 
   async function load() {
@@ -881,30 +922,6 @@ export default function Devices() {
             <option key={s.value} value={s.value}>{s.label}</option>
           ))}
         </select>
-        {/* Ordenação — não filtra, só reordena os já-filtrados acima */}
-        <select
-          value={ordenarPor}
-          onChange={e => setOrdenarPor(e.target.value)}
-          title="Ordenar por"
-          className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
-        >
-          <option value="id">Ordenar por ID</option>
-          <option value="nome">Ordenar por Nome</option>
-          <option value="tipo">Ordenar por Tipo</option>
-          <option value="fabricante">Ordenar por Fabricante</option>
-          <option value="protocolo">Ordenar por Protocolo</option>
-          <option value="ativo">Ordenar por Ativo</option>
-          <option value="ultimo_backup">Ordenar por Último backup</option>
-        </select>
-        <select
-          value={direcao}
-          onChange={e => setDirecao(e.target.value)}
-          title="Direção"
-          className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
-        >
-          <option value="asc">Crescente (1→9, A→Z)</option>
-          <option value="desc">Decrescente (9→1, Z→A)</option>
-        </select>
         {(filtroAtivo || ordenacaoNaoDefault) && (
           <button
             onClick={limparFiltros}
@@ -921,15 +938,16 @@ export default function Devices() {
         <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[640px]">
           <thead>
-            <tr className="border-b border-slate-700 text-slate-400 text-left">
-              <th className="px-5 py-3 font-medium">ID</th>
-              <th className="px-5 py-3 font-medium">Nome</th>
+            <tr className="border-b border-slate-700 text-slate-400 text-left select-none">
+              <ThOrdenavel coluna="id" label="ID" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
+              <ThOrdenavel coluna="nome" label="Nome" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
+              {/* IP fica estático — não há ordenação por IP no memo */}
               <th className="px-5 py-3 font-medium">IP</th>
-              <th className="px-5 py-3 font-medium">Tipo</th>
-              <th className="px-5 py-3 font-medium">Fabricante</th>
-              <th className="px-5 py-3 font-medium">Protocolo</th>
-              <th className="px-5 py-3 font-medium">Ativo</th>
-              <th className="px-5 py-3 font-medium">Último backup</th>
+              <ThOrdenavel coluna="tipo" label="Tipo" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
+              <ThOrdenavel coluna="fabricante" label="Fabricante" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
+              <ThOrdenavel coluna="protocolo" label="Protocolo" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
+              <ThOrdenavel coluna="ativo" label="Ativo" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
+              <ThOrdenavel coluna="ultimo_backup" label="Último backup" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
               {canEdit && <th className="px-5 py-3 font-medium text-right">Ações</th>}
             </tr>
           </thead>
