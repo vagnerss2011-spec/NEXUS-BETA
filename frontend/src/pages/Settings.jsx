@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Clock, Save, ScrollText, Bell, Send, AlertTriangle } from 'lucide-react'
+import { Clock, Save, ScrollText, Bell, Send, AlertTriangle, Gauge } from 'lucide-react'
 import api from '../services/api'
 
 // Converte dias <-> exibição em dias/meses (mês = 30 dias)
@@ -21,6 +21,10 @@ export default function Settings() {
   const [minute, setMinute] = useState(0)
   const [retValue, setRetValue] = useState(30)
   const [retUnit, setRetUnit] = useState('dias')
+  // Tuning do scheduler diário (delay adaptativo entre devices)
+  const [delayMin, setDelayMin] = useState(10)
+  const [delayFator, setDelayFator] = useState(0.2)
+  const [picoFator, setPicoFator] = useState(3.0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -44,6 +48,9 @@ export default function Settings() {
         const v = daysToView(r.data.log_retention_days ?? 30)
         setRetValue(v.value)
         setRetUnit(v.unit)
+        setDelayMin(r.data.backup_delay_min_seg ?? 10)
+        setDelayFator(r.data.backup_delay_fator ?? 0.2)
+        setPicoFator(r.data.backup_pico_fator_critico ?? 3.0)
       })
       .finally(() => setLoading(false))
 
@@ -69,6 +76,9 @@ export default function Settings() {
         backup_hour: hour,
         backup_minute: minute,
         log_retention_days: viewToDays(retValue, retUnit),
+        backup_delay_min_seg: Number(delayMin),
+        backup_delay_fator: Number(delayFator),
+        backup_pico_fator_critico: Number(picoFator),
       })
       setMessage({ type: 'success', text: 'Configurações atualizadas com sucesso!' })
     } catch {
@@ -170,6 +180,54 @@ export default function Settings() {
                 </div>
                 <p className="text-slate-500 text-xs">
                   Backup diário agendado para <span className="text-sky-400 font-medium">{pad(hour)}:{pad(minute)}</span>.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-slate-800 border border-slate-700 rounded-xl">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
+            <Gauge size={18} className="text-slate-400" />
+            <h2 className="font-semibold text-white">Ritmo do Scheduler (delay adaptativo)</h2>
+          </div>
+          <div className="p-4 sm:p-5 space-y-4">
+            {loading ? (
+              <p className="text-slate-400 text-sm">Carregando...</p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500">
+                  Controla o intervalo entre coletas no backup diário (apenas SSH/Telnet/API — push não é afetado).
+                  Fórmula: <code className="text-sky-300">delay = max(mínimo, fator × duração_anterior)</code>.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Delay mínimo (s)</label>
+                    <input type="number" min="0" max="600" value={delayMin}
+                      onChange={e => setDelayMin(e.target.value)}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                    <p className="text-[11px] text-slate-500 mt-1">Piso entre devices. 0 = sem pausa.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Fator adaptativo</label>
+                    <input type="number" min="0" max="10" step="0.1" value={delayFator}
+                      onChange={e => setDelayFator(e.target.value)}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                    <p className="text-[11px] text-slate-500 mt-1">0.2 = backup de 5min vira 60s de pausa.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Pico crítico (×)</label>
+                    <input type="number" min="1" max="100" step="0.1" value={picoFator}
+                      onChange={e => setPicoFator(e.target.value)}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500" />
+                    <p className="text-[11px] text-slate-500 mt-1">Multiplicador da média histórica que dispara alerta.</p>
+                  </div>
+                </div>
+                <p className="text-slate-500 text-xs">
+                  Com <span className="text-sky-400 font-medium">{delayMin}s</span> de piso e fator{' '}
+                  <span className="text-sky-400 font-medium">{delayFator}</span>, devices que levam ~30s ficam com pausa de{' '}
+                  <span className="text-sky-300 font-medium">{Math.max(Number(delayMin) || 0, Math.round((Number(delayFator) || 0) * 30))}s</span>{' '}
+                  entre coletas. Picos &gt; <span className="text-amber-400 font-medium">{picoFator}×</span> a média do device viram alerta Telegram.
                 </p>
               </>
             )}

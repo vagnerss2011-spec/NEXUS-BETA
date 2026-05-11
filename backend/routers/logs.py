@@ -27,6 +27,11 @@ class LogSchedulerOut(BaseModel):
     sucessos: Optional[int]
     falhas: Optional[int]
     erro_geral: Optional[str]
+    # Métricas v2 (delay adaptativo) — NULL em logs antigos
+    duracao_total_segundos: Optional[int] = None
+    duracao_media_segundos: Optional[float] = None
+    picos_detectados: Optional[int] = None
+    alertas_tamanho: Optional[int] = None
     criado_em: datetime
     empresas: list[EmpresaResumoLog] = []
 

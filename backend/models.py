@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Enum, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -166,6 +166,11 @@ class Backup(Base):
     # de qual OLT?". NULL = backup sem origem-arquivo (manual/scheduler ou push
     # antigo pré-migração).
     nome_arquivo = Column(String(255), nullable=True)
+    # Duração em segundos da coleta (tempo do paramiko/netmiko/api). Usada
+    # pelo scheduler pra calcular delay adaptativo do próximo device e
+    # detectar picos. NULL = backup pré-feature (rodou antes da v2 do
+    # scheduler) ou ftp-push (não medimos tempo de chegada).
+    duracao_segundos = Column(Integer, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     device = relationship("Device", back_populates="backups")
 
@@ -176,6 +181,20 @@ class Configuracao(Base):
     backup_minute = Column(Integer, nullable=False, default=0)
     # Retenção de logs do scheduler em dias. 0 = desativado (não purga).
     log_retention_days = Column(Integer, nullable=False, default=30)
+    # ===== Tuning do scheduler diário (delay entre devices) =====
+    # Delay MÍNIMO (segundos) entre o fim de um backup e o início do próximo.
+    # Default 10s — dá fôlego pro container/rede entre coletas sequenciais.
+    # 0 = sem delay (comportamento legado pré-feature, válido em prod pequena).
+    backup_delay_min_seg = Column(Integer, nullable=False, default=10)
+    # Fator multiplicador da duração do device anterior pra calcular o delay
+    # adaptativo: delay = max(min_seg, fator × duração_anterior).
+    # Default 0.2 — backup de 5min → 60s de pausa; 30s → fica no piso.
+    # 0.0 = só piso fixo (sem adaptação).
+    backup_delay_fator = Column(Float, nullable=False, default=0.2)
+    # Fator de detecção de pico: se duração do device > fator × média histórica,
+    # registra WARNING crítico e dispara alerta Telegram (categoria volume_alto).
+    # Default 3.0 — backup que normalmente leva 60s mas levou 180s vira alerta.
+    backup_pico_fator_critico = Column(Float, nullable=False, default=3.0)
     # ===== Telegram (alertas de falha/corrupção) =====
     # Token do bot (Fernet-encrypted). NULL = notificações Telegram desabilitadas.
     # 1 bot único pra toda a instalação; cada empresa pode ter seu chat_id próprio.
@@ -210,4 +229,14 @@ class LogScheduler(Base):
     sucessos = Column(Integer, nullable=True)
     falhas = Column(Integer, nullable=True)
     erro_geral = Column(Text, nullable=True)
+    # Métricas v2 (delay adaptativo) — preenchidas pelo scheduler quando termina:
+    # - duracao_total_segundos: tempo total da janela (incluindo delays entre devices)
+    # - duracao_media_segundos: média de duração POR DEVICE (coleta pura, sem delays)
+    # - picos_detectados: número de devices que levaram > N× a média histórica deles
+    # - alertas_tamanho: número de devices com backup < 50% do último sucesso
+    # NULL nos campos novos = log pré-feature.
+    duracao_total_segundos = Column(Integer, nullable=True)
+    duracao_media_segundos = Column(Float, nullable=True)
+    picos_detectados = Column(Integer, nullable=True)
+    alertas_tamanho = Column(Integer, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

@@ -310,9 +310,23 @@ function SchedulerRow({ log, onOpen, canDelete, onDelete, mostrarEmpresa }) {
         <span className="text-xs">{log.total ?? 0} devices</span>
         <span className="text-xs text-emerald-400 ml-2">{log.sucessos ?? 0} ok</span>
         {log.falhas > 0 && <span className="text-xs text-red-400 ml-2">{log.falhas} falha{log.falhas === 1 ? '' : 's'}</span>}
+        {/* Picos e alertas de tamanho — v2 do scheduler. NULL/0 = sem aviso. */}
+        {log.picos_detectados > 0 && (
+          <span className="text-xs text-amber-400 ml-2" title="Devices que demoraram > N× a média histórica deles">
+            ⚡ {log.picos_detectados} pico{log.picos_detectados === 1 ? '' : 's'}
+          </span>
+        )}
+        {log.alertas_tamanho > 0 && (
+          <span className="text-xs text-orange-400 ml-2" title="Backups com tamanho < 50% do último sucesso">
+            📉 {log.alertas_tamanho}
+          </span>
+        )}
       </td>
       <td className="px-4 py-3 text-slate-400 text-xs">
         SSH/Telnet · duração: {duration(log.inicio, log.fim)}
+        {log.duracao_media_segundos != null && (
+          <span className="text-slate-500"> · média {Math.round(log.duracao_media_segundos)}s/device</span>
+        )}
       </td>
       {mostrarEmpresa && (
         <td className="px-4 py-3">

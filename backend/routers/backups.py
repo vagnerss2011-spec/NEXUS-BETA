@@ -61,19 +61,26 @@ async def executar_backup_manual(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    import time as _time
     result = await db.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
         raise HTTPException(status_code=404, detail="Dispositivo não encontrado")
     ensure_empresa_access(user, device.empresa_id)
 
+    # Mede duração também em coletas manuais — alimenta a média histórica
+    # usada pelo scheduler pra detectar picos. Sem isso, devices só rodados
+    # manualmente nunca teriam baseline e ficariam fora da detecção.
+    t_inicio = _time.monotonic()
     status, conteudo = run_backup(device)
+    duracao_seg = int(round(_time.monotonic() - t_inicio))
     backup = Backup(
         device_id=device.id,
         status=status,
         conteudo=conteudo if status == "sucesso" else None,
         erro=conteudo if status == "falha" else None,
         origem="manual",
+        duracao_segundos=duracao_seg,
     )
     db.add(backup)
     await db.flush()

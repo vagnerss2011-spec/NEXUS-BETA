@@ -195,6 +195,7 @@ class BackupOut(BaseModel):
     log_scheduler_id: Optional[int] = None  # preenchido = scheduler do painel
     origem: str = "manual"  # manual | scheduler | push (vide models.Backup.origem)
     nome_arquivo: Optional[str] = None  # nome do arquivo original (push) — chave pra identificar fonte
+    duracao_segundos: Optional[int] = None  # tempo da coleta (NULL = push ou pré-feature)
     criado_em: datetime
     class Config:
         from_attributes = True
@@ -207,6 +208,10 @@ class ScheduleOut(BaseModel):
     backup_hour: int
     backup_minute: int
     log_retention_days: int
+    # Tuning do scheduler diário (v2 — delay adaptativo entre devices)
+    backup_delay_min_seg: int = 10
+    backup_delay_fator: float = 0.2
+    backup_pico_fator_critico: float = 3.0
     class Config:
         from_attributes = True
 
@@ -214,6 +219,9 @@ class ScheduleUpdate(BaseModel):
     backup_hour: int
     backup_minute: int
     log_retention_days: Optional[int] = None  # 0 = desativa a purga
+    backup_delay_min_seg: Optional[int] = None
+    backup_delay_fator: Optional[float] = None
+    backup_pico_fator_critico: Optional[float] = None
 
 # Telegram (alertas de falha/corrupção)
 class TelegramConfigOut(BaseModel):

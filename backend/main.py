@@ -205,6 +205,46 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS telegram_alerta_volume_alto BOOLEAN NOT NULL DEFAULT TRUE
         """))
 
+        # Tuning do scheduler diário v2 — delay adaptativo entre devices SSH/Telnet/API.
+        # Defaults conservadores que preservam o ritmo legado em prod pequena
+        # (10s de pausa só faz diferença quando há muitos devices na fila).
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_delay_min_seg INTEGER NOT NULL DEFAULT 10
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_delay_fator DOUBLE PRECISION NOT NULL DEFAULT 0.2
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_pico_fator_critico DOUBLE PRECISION NOT NULL DEFAULT 3.0
+        """))
+
+        # backups.duracao_segundos — tempo de coleta por device (NULL = pré-feature ou push)
+        await conn.execute(text("""
+            ALTER TABLE backups
+            ADD COLUMN IF NOT EXISTS duracao_segundos INTEGER
+        """))
+
+        # log_scheduler — métricas agregadas da janela diária (NULL = log pré-feature)
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS duracao_total_segundos INTEGER
+        """))
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS duracao_media_segundos DOUBLE PRECISION
+        """))
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS picos_detectados INTEGER
+        """))
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS alertas_tamanho INTEGER
+        """))
+
         # 8.0.2) empresas.telegram_chat_id (override do default global por empresa)
         await conn.execute(text("""
             ALTER TABLE empresas

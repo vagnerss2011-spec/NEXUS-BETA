@@ -43,12 +43,26 @@ async def update_schedule(
         raise HTTPException(status_code=422, detail="Minuto deve ser entre 0 e 59")
     if body.log_retention_days is not None and not (0 <= body.log_retention_days <= 3650):
         raise HTTPException(status_code=422, detail="Retenção de logs deve ser entre 0 e 3650 dias")
+    # Limites de tuning do delay: valores grandes demais travariam a janela noturna,
+    # valores negativos não fazem sentido.
+    if body.backup_delay_min_seg is not None and not (0 <= body.backup_delay_min_seg <= 600):
+        raise HTTPException(status_code=422, detail="Delay mínimo deve ser entre 0 e 600 segundos")
+    if body.backup_delay_fator is not None and not (0.0 <= body.backup_delay_fator <= 10.0):
+        raise HTTPException(status_code=422, detail="Fator de delay deve ser entre 0 e 10")
+    if body.backup_pico_fator_critico is not None and not (1.0 <= body.backup_pico_fator_critico <= 100.0):
+        raise HTTPException(status_code=422, detail="Fator de pico crítico deve ser ≥ 1 (1 = qualquer aumento conta)")
 
     config = await _get_or_create_config(db)
     config.backup_hour = body.backup_hour
     config.backup_minute = body.backup_minute
     if body.log_retention_days is not None:
         config.log_retention_days = body.log_retention_days
+    if body.backup_delay_min_seg is not None:
+        config.backup_delay_min_seg = body.backup_delay_min_seg
+    if body.backup_delay_fator is not None:
+        config.backup_delay_fator = body.backup_delay_fator
+    if body.backup_pico_fator_critico is not None:
+        config.backup_pico_fator_critico = body.backup_pico_fator_critico
     await db.commit()
     await db.refresh(config)
 
