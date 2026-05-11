@@ -677,9 +677,12 @@ export default function Devices() {
       if (ehCriacao) resp = await api.post('/devices/', payload)
       else resp = await api.put(`/devices/${modal}`, payload)
       fecharModal()
-      // Criação de FTP/SFTP push retorna ftp_senha em texto puro UMA vez.
-      // (TFTP não cai aqui — não tem credencial.)
-      if (resp?.data?.ftp_senha) {
+      // Criação de FTP/SFTP push retorna ftp_senha em texto puro UMA vez —
+      // admin precisa anotar pra configurar no equipamento.
+      // Device API também gera cred SFTP internamente (pro Plano C de coleta),
+      // mas é detalhe interno do NEXUS — backend usa direto, admin não toca.
+      // Esconde o modal nesse caso pra não confundir.
+      if (resp?.data?.ftp_senha && resp.data.protocolo !== 'api') {
         setCredencialFtp({
           nome: resp.data.nome,
           fabricante: resp.data.fabricante,

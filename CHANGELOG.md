@@ -12,6 +12,13 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.8] - 2026-05-11
+
+### Corrigido
+
+- **NTP cliente não era aplicado na criação de device API** (v1.4.7) — `aplicar_config_padrao` chamava `api("/system/ntp/client/set", ...)` direto, sem consumir o iterator retornado. Em `librouteros 3.4`, o retorno de `api(cmd, **kwargs)` é um `Iterator[Dict]` **lazy** — comando só é efetivamente enviado ao Mikrotik quando o iterator é iterado (consumido). Fix: envolver todas as chamadas com `list(...)` pra forçar o envio. Validado em prod no device 53 (RB3011): com `list()`, `primary-ntp` foi setado corretamente.
+- **Frontend mostrava modal de "Credencial FTP gerada" ao criar device API.** Era confuso porque essa cred é detalhe interno do NEXUS (backend usa pra disparar o `/tool/fetch upload` do Plano C de coleta) — admin não precisa configurar nada manualmente no equipamento. Esconde o modal quando `protocolo=api`; continua mostrando pros fluxos `ftp_push`/`sftp_push` onde a cred é necessária pro admin configurar no device.
+
 ## [1.4.7] - 2026-05-11
 
 ### Adicionado

@@ -326,26 +326,29 @@ def aplicar_config_padrao(device: Device) -> tuple[bool, str]:
 
     erros = []
     try:
-        # Timezone — sintaxe igual em v6 e v7.
+        # Timezone — sintaxe igual em v6 e v7. list() força o iterator do
+        # librouteros a consumir o reply — sem isso o comando NÃO é
+        # efetivamente enviado pra rede (bug encontrado em prod 2026-05-11).
         try:
-            api("/system/clock/set", **{
+            list(api("/system/clock/set", **{
                 "time-zone-name": "America/Sao_Paulo",
                 "time-zone-autodetect": "no",
-            })
+            }))
         except Exception as e:
             erros.append(f"timezone: {e}")
 
         # NTP — v7 usa `servers=`, v6 usa `primary-ntp=`. Tenta v7 primeiro;
-        # se firmware não reconhecer, cai pra v6. Idempotente em ambas.
+        # se firmware não reconhecer (TrapError unknown parameter em v6),
+        # cai pra v6. Idempotente em ambas.
         try:
-            api("/system/ntp/client/set",
-                enabled="yes",
-                servers=settings.FTP_MASQUERADE_ADDRESS)
+            list(api("/system/ntp/client/set",
+                     enabled="yes",
+                     servers=settings.FTP_MASQUERADE_ADDRESS))
         except Exception:
             try:
-                api("/system/ntp/client/set",
-                    enabled="yes",
-                    **{"primary-ntp": settings.FTP_MASQUERADE_ADDRESS})
+                list(api("/system/ntp/client/set",
+                         enabled="yes",
+                         **{"primary-ntp": settings.FTP_MASQUERADE_ADDRESS}))
             except Exception as e:
                 erros.append(f"ntp: {e}")
     finally:
