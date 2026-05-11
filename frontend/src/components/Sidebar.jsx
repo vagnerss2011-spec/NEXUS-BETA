@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X } from 'lucide-react'
+import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X, Sparkles } from 'lucide-react'
 import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
 import { APP_VERSION } from '../version'
 
@@ -21,6 +21,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
     { to: '/backups', icon: Archive, label: 'Backups' },
     ...(canSeeUsers ? [{ to: '/users', icon: Users, label: 'Usuários' }] : []),
     ...(canSeeLogs ? [{ to: '/logs', icon: ScrollText, label: 'Logs' }] : []),
+    { to: '/novidades', icon: Sparkles, label: 'Novidades' },
     ...(canSeeSettings ? [{ to: '/settings', icon: Settings, label: 'Configurações' }] : []),
   ]
 

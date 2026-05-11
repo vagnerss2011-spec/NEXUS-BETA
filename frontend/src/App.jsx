@@ -8,6 +8,7 @@ import Backups from './pages/Backups'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
 import Logs from './pages/Logs'
+import Novidades from './pages/Novidades'
 import Layout from './components/Layout'
 import { getCurrentEmpresa, getUser } from './services/api'
 
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="backups" element={<RequireEmpresa><Backups /></RequireEmpresa>} />
           <Route path="users" element={<Users />} />
           <Route path="logs" element={<Logs />} />
+          <Route path="novidades" element={<Novidades />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
