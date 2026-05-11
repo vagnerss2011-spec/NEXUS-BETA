@@ -48,7 +48,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
       <div className="p-5 border-b border-slate-700 flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2.5">
-            <img src="/nexus-logo-sm.png" alt="NEXUS BACKUP" className="w-9 h-9" />
+            <img src="/nexus-logo-sm.png" alt="NEXUS BACKUP" className="h-8 w-auto" />
             <span className="font-bold text-lg tracking-wide text-white">NEXUS BACKUP</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">Backup Manager</p>

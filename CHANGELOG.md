@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.3.3] - 2026-05-10
+
+### Corrigido
+
+- **Logo no Login parecia "muito acima" do título** `<h1>NEXUS BACKUP</h1>` porque a imagem original tinha o texto "NEXUS BACKUP / by innetsolutions" embutido no rodapé, criando duplicação visual. Regenerados todos os assets (`nexus-logo.png`, `nexus-logo.webp`, `nexus-logo-sm.png`, `favicon.*`) com auto-detecção do gap entre escudo e texto (Pillow + numpy) — só o escudo é mantido, o texto da imagem é descartado. O h1 do código vira o único texto "NEXUS BACKUP" visível. CSS atualizado pra preservar aspect ratio real do escudo (763×588 source → `h-36 sm:h-44 w-auto` no Login, `h-8 w-auto` no Sidebar).
+
 ## [1.3.2] - 2026-05-10
 
 ### Corrigido
