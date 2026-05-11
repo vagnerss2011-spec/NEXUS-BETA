@@ -81,7 +81,7 @@ DEVICE_TYPES_TELNET = {
     DeviceVendor.datacom:   "cisco_ios_telnet",
     DeviceVendor.cisco:     "cisco_ios_telnet",
     DeviceVendor.juniper:   "juniper_junos_telnet",
-    DeviceVendor.zte:        "cisco_ios_telnet",
+    DeviceVendor.zte:        "zte_zxros_telnet",
     DeviceVendor.nokia:      "nokia_sros_telnet",
     DeviceVendor.fiberhome:  "generic_termserver",
     DeviceVendor.vsolutions: "generic_termserver",
@@ -265,7 +265,12 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
     read_channel até idle, paginação manual via space (--More--)."""
     is_telnet = device.protocolo == Protocolo.telnet
     conn = {
-        "device_type": "cisco_ios_telnet" if is_telnet else "zte_zxros",
+        # zte_zxros_telnet: driver dedicado da ZTE no Netmiko. Antes usava
+        # cisco_ios_telnet como fallback, mas ele auto-envia `terminal width 511`
+        # no session_preparation, e a ZTE C320 retorna `%Error 20200: Invalid
+        # input` — Netmiko não vê o echo esperado e dispara "Pattern not
+        # detected: 'terminal width 511'" antes mesmo de entrar no loop manual.
+        "device_type": "zte_zxros_telnet" if is_telnet else "zte_zxros",
         "host": _clean_host(device.ip),
         "port": device.porta,
         "username": device.usuario_ssh,

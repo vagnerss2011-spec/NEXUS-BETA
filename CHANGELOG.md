@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.8] - 2026-05-10
+
+### Corrigido
+
+- **Backup Telnet de ZTE C320 falhava com `Pattern not detected: 'terminal width 511' in output`** logo no setup da conexão. Causa: `_run_zte_netmiko` usava `cisco_ios_telnet` como driver Netmiko quando o protocolo era Telnet, e esse driver auto-envia `terminal width 511` no `session_preparation`. A ZTE responde `%Error 20200: Invalid input detected` (não conhece o comando), Netmiko não vê o echo esperado e levanta exception antes mesmo de entrar no loop de coleta manual. Fix: trocar para `zte_zxros_telnet` (driver dedicado da ZTE no Netmiko, conhece a sintaxe certa), tanto em `_run_zte_netmiko` quanto no mapeamento `DEVICE_TYPES_TELNET`.
+
 ## [1.2.7] - 2026-05-10
 
 ### Corrigido
