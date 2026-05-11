@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.1] - 2026-05-10
+
+### Corrigido
+
+- **Trocar protocolo no formulário agora SEMPRE reseta a porta pro default** do novo protocolo. Antes preservava porta custom (ex.: SSH 2399 → API ficava em 2399 e quebrava com `Unknown control byte 0xff` porque o librouteros tentava falar API binária com SSH na outra ponta). Validado em prod: CRS317_26_Fibra com SSH em 2399 → mudou pra API → porta ficou 2399 → quebrou. Se usuário quiser porta custom, edita o campo Porta DEPOIS de escolher o protocolo. Mesma simplificação aplicada no toggle TLS da API Mikrotik (sempre vai pra 8728/8729 conforme o checkbox).
+
 ## [1.4.0] - 2026-05-10
 
 ### Adicionado

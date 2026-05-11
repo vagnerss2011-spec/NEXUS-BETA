@@ -1486,20 +1486,18 @@ export default function Devices() {
                         name="protocolo"
                         value={p}
                         checked={form.protocolo === p}
-                        onChange={() => setForm(f => {
-                          // Porta atual era o default do protocolo anterior?
-                          // (vale também pra `api` que pode ter porta 8728 ou 8729 conforme TLS)
-                          const apiPortaAtual = f.protocolo === 'api' && f.api_tls ? API_PORT_TLS : DEFAULT_PORTS[f.protocolo]
-                          const portaDefaultAtual = f.protocolo === 'api' ? apiPortaAtual : DEFAULT_PORTS[f.protocolo]
-                          const novaPorta = p === 'api' ? (f.api_tls ? API_PORT_TLS : DEFAULT_PORTS.api) : DEFAULT_PORTS[p]
-                          return {
-                            ...f,
-                            protocolo: p,
-                            porta: f.porta === portaDefaultAtual ? novaPorta : f.porta,
-                            // Telnet / Push / API não usam chave SSH — força senha
-                            auth_method: (p === 'telnet' || p === 'api' || PUSH_PROTOCOLS.includes(p)) ? 'password' : f.auth_method,
-                          }
-                        })}
+                        onChange={() => setForm(f => ({
+                          ...f,
+                          protocolo: p,
+                          // Sempre reseta pra porta default do novo protocolo. Antes preservava
+                          // porta custom se o usuário tinha mudado, mas isso fazia ele esquecer
+                          // de ajustar ao trocar protocolo — ex.: SSH custom em 2399 → API ficava
+                          // em 2399 e quebrava com 'Unknown control byte 0xff' (validado em prod).
+                          // Se quiser porta custom no novo protocolo, edita o campo Porta depois.
+                          porta: p === 'api' ? (f.api_tls ? API_PORT_TLS : DEFAULT_PORTS.api) : DEFAULT_PORTS[p],
+                          // Telnet / Push / API não usam chave SSH — força senha
+                          auth_method: (p === 'telnet' || p === 'api' || PUSH_PROTOCOLS.includes(p)) ? 'password' : f.auth_method,
+                        }))}
                         className="accent-sky-500"
                       />
                       <span className={`text-sm font-medium ${cls}`}>
@@ -1520,10 +1518,10 @@ export default function Devices() {
                       onChange={e => setForm(f => ({
                         ...f,
                         api_tls: e.target.checked,
-                        // Auto-trocar porta APENAS se ela ainda for o default do estado anterior.
-                        porta: f.porta === (f.api_tls ? API_PORT_TLS : DEFAULT_PORTS.api)
-                          ? (e.target.checked ? API_PORT_TLS : DEFAULT_PORTS.api)
-                          : f.porta,
+                        // Sempre reset pra default do modo (plain/TLS). Se quiser porta custom,
+                        // edita o campo Porta depois. Manter porta antiga ao toggle confunde
+                        // mais que ajuda (validado em prod com erro 0xff em v1.4.0).
+                        porta: e.target.checked ? API_PORT_TLS : DEFAULT_PORTS.api,
                       }))}
                       className="accent-pink-500"
                     />
