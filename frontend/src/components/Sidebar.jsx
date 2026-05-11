@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Router, Archive, Users, LogOut, Shield, Settings, ScrollText, Building2, Repeat, X } from 'lucide-react'
+import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X } from 'lucide-react'
 import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
 import { APP_VERSION } from '../version'
 
@@ -47,8 +47,8 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
     >
       <div className="p-5 border-b border-slate-700 flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <Shield className="text-sky-400" size={22} />
+          <div className="flex items-center gap-2.5">
+            <img src="/nexus-logo-sm.png" alt="NEXUS BACKUP" className="w-9 h-9" />
             <span className="font-bold text-lg tracking-wide text-white">NEXUS BACKUP</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">Backup Manager</p>
@@ -112,6 +112,15 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
           <LogOut size={16} /> Sair
         </button>
         <p className="text-center text-[10px] text-slate-600 mt-3 tracking-wider">v{APP_VERSION}</p>
+        {/* Crédito autoral — sutil mas sempre presente. Não-clicável de propósito
+            pra não conflitar com o foco do app (gestão de backup). */}
+        <p className="text-center text-[10px] text-slate-600 mt-1 leading-relaxed">
+          Idealizado e testado por Vagner<br />
+          <a href="https://innetsolutions.com.br" target="_blank" rel="noopener noreferrer"
+             className="text-slate-500 hover:text-sky-400 transition-colors">
+            innetsolutions.com.br
+          </a>
+        </p>
       </div>
     </aside>
   )

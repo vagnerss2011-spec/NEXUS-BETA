@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Shield, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import api, { setCurrentEmpresa } from '../services/api'
 import { APP_VERSION } from '../version'
 
@@ -67,9 +67,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-slate-900">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-sky-500/20 mb-4">
-            <Shield className="text-sky-400" size={28} />
-          </div>
+          <img src="/nexus-logo.png" alt="NEXUS BACKUP" className="w-28 h-28 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-white">NEXUS BACKUP</h1>
           <p className="text-slate-400 text-sm mt-1">Backup Manager — Acesso restrito</p>
         </div>

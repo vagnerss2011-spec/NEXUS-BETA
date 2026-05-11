@@ -12,6 +12,14 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.3.1] - 2026-05-10
+
+### Adicionado
+
+- **Logomarca oficial do NEXUS BACKUP** substituindo o ícone genérico `Shield` (lucide-react) que era usado como placeholder. Aplicada no header do Sidebar (versão 128px, ~12 KB) e na tela de Login (versão 512px, ~120 KB). Original 1.5 MB foi otimizada com Pillow (`optimize=True`, LANCZOS resampling) — redução de >90% sem perda visual.
+- **Favicon** (`favicon.ico` multi-res + PNG 16/32) configurado no `index.html`. Antes a aba do browser mostrava ícone default do Vite.
+- **Crédito autoral no rodapé do Sidebar**: *"Idealizado e testado por Vagner — [innetsolutions.com.br](https://innetsolutions.com.br)"*. Link sutil em hover sky-blue, abre em aba nova.
+
 ## [1.3.0] - 2026-05-10
 
 ### Mudança importante
