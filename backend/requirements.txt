@@ -28,3 +28,6 @@ pyftpdlib==1.5.10
 # Já vem como dep transitiva do fastapi/starlette — mas declaramos explícito
 # pra deixar claro o uso e fixar a versão.
 httpx==0.27.0
+# RouterOS API binária (Mikrotik v6+v7) — protocolo 'api' nos devices.
+# Porta 8728 (plain) ou 8729 (TLS). Adicionado em v1.4.0.
+librouteros==3.4.0

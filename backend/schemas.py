@@ -113,6 +113,8 @@ class DeviceCreate(BaseModel):
     chave_passphrase: Optional[str] = None
     # FTP push (apenas quando protocolo=ftp_push)
     ftp_origem_cidr: Optional[str] = None
+    # API Mikrotik (apenas quando protocolo=api): True = porta 8729 TLS, False = 8728 plain.
+    api_tls: bool = False
     empresa_id: Optional[int] = None  # exigido p/ admin master; ignorado p/ demais (usa a do token)
 
     @field_validator("ip")
@@ -133,6 +135,7 @@ class DeviceUpdate(BaseModel):
     chave_privada: Optional[str] = None
     chave_passphrase: Optional[str] = None
     ftp_origem_cidr: Optional[str] = None
+    api_tls: Optional[bool] = None
     ativo: Optional[bool] = None
     empresa_id: Optional[int] = None  # só admin master pode mover entre empresas
 
@@ -160,6 +163,8 @@ class DeviceOut(BaseModel):
     ftp_user: Optional[str] = None
     ftp_origem_cidr: Optional[str] = None
     ftp_senha: Optional[str] = None
+    # API Mikrotik (só relevante quando protocolo='api')
+    api_tls: bool = False
     ultimo_backup_status: Optional[str] = None  # 'sucesso' | 'falha' | None (nunca rodou)
     ultimo_backup_em: Optional[datetime] = None
     class Config:

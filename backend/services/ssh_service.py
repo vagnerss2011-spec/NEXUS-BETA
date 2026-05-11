@@ -382,9 +382,19 @@ def _run_mikrotik_paramiko(device: Device) -> tuple[str, str]:
 
 def run_backup(device: Device) -> tuple[str, str]:
     is_telnet = device.protocolo == Protocolo.telnet
+    is_api = device.protocolo == Protocolo.api
     # Telnet só suporta senha. Falha cedo para evitar erros confusos.
     if is_telnet and device.auth_method == AuthMethod.ssh_key:
         return "falha", "Telnet não suporta autenticação por chave SSH — altere o protocolo para SSH ou use senha."
+    # API Mikrotik: dispatch antes dos handlers SSH/Telnet pra evitar tentar
+    # ConnectHandler do Netmiko na porta 8728 (que não fala SSH).
+    if is_api:
+        if device.fabricante not in (DeviceVendor.mikrotik, DeviceVendor.mikrotik_v7):
+            return "falha", "API binária só é suportada em Mikrotik (RouterOS v6 ou v7)."
+        if device.auth_method == AuthMethod.ssh_key:
+            return "falha", "API Mikrotik não suporta autenticação por chave SSH — use senha."
+        from services.mikrotik_api import run_backup_via_api
+        return run_backup_via_api(device)
     try:
         if device.fabricante in (DeviceVendor.mikrotik, DeviceVendor.mikrotik_v7) and not is_telnet:
             return _run_mikrotik_paramiko(device)

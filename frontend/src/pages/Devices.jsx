@@ -33,7 +33,7 @@ const TIPOS = [
   { value: 'unm2000', label: 'UNM2000 (NMS)' },
 ]
 const TIPO_LABEL = Object.fromEntries(TIPOS.map(t => [t.value, t.label]))
-const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '', ftp_origem_cidr: '' }
+const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '', ftp_origem_cidr: '', api_tls: false }
 const STATUS_FILTROS = [
   { value: 'todos', label: 'Todos os status' },
   { value: 'sucesso', label: 'Backup com sucesso' },
@@ -44,7 +44,11 @@ const STATUS_FILTROS = [
 // pra 2288 pra liberar a 22 ao container, porque a maioria dos equipamentos
 // (OLTs Huawei VRP, ZTE, switches genéricos) não aceita porta SFTP custom no
 // comando de backup. Padronizamos em 22 para todos os fabricantes.
-const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_push: 69 }
+// `api` é RouterOS API binária — porta 8728 plain ou 8729 TLS. A escolha entre
+// uma e outra é por device.api_tls; o DEFAULT_PORTS aqui serve só pro select
+// inicial (sem TLS). Quando o usuário marca a checkbox TLS, a porta troca pra 8729.
+const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_push: 69, api: 8728 }
+const API_PORT_TLS = 8729
 
 // O IP do servidor que aparece nos exemplos vem do backend (/api/info/server),
 // que retorna o FTP_MASQUERADE_ADDRESS configurado no .env desta instância.
@@ -52,7 +56,7 @@ const DEFAULT_PORTS = { ssh: 22, telnet: 23, ftp_push: 21, sftp_push: 22, tftp_p
 // próprio — antes (até v1.2.0) era hardcoded, então uma instância nova
 // mostrava o IP da instância antiga nos exemplos. Fallback `<SERVIDOR>` se
 // o fetch falhar / .env não tiver FTP_MASQUERADE_ADDRESS preenchido.
-const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
+const PROTOCOL_LABEL = { ssh: 'SSH', telnet: 'Telnet', api: 'API Mikrotik', ftp_push: 'FTP push', sftp_push: 'SFTP push', tftp_push: 'TFTP push' }
 const PUSH_PROTOCOLS = ['sftp_push', 'ftp_push', 'tftp_push']  // ordem do select (SFTP recomendado)
 const PUSH_PROTO_INFO = {
   sftp_push: { label: 'SFTP', desc: 'criptografado (recomendado)', porta: 22, cor: 'text-emerald-300' },
@@ -642,8 +646,9 @@ export default function Devices() {
     setLoading(true)
     try {
       const isTelnet = form.protocolo === 'telnet'
+      const isApi = form.protocolo === 'api'
       const isPush = PUSH_PROTOCOLS.includes(form.protocolo)
-      const authMethod = (isTelnet || isPush) ? 'password' : (form.auth_method || 'password')
+      const authMethod = (isTelnet || isApi || isPush) ? 'password' : (form.auth_method || 'password')
       const payload = {
         nome: form.nome,
         ip: form.ip,
@@ -655,7 +660,10 @@ export default function Devices() {
         auth_method: authMethod,
         empresa_id: empresa?.id,
       }
-      if (isPush) {
+      if (isApi) {
+        payload.api_tls = !!form.api_tls
+        if (form.senha_ssh) payload.senha_ssh = form.senha_ssh
+      } else if (isPush) {
         payload.ftp_origem_cidr = form.ftp_origem_cidr
       } else if (authMethod === 'ssh_key') {
         if (form.chave_privada && form.chave_privada.trim()) payload.chave_privada = form.chave_privada
@@ -887,16 +895,19 @@ export default function Devices() {
                   <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium ${
                     d.protocolo === 'telnet'
                       ? 'bg-orange-500/20 text-orange-400'
-                      : d.protocolo === 'ftp_push'
-                        ? 'bg-violet-500/20 text-violet-300'
-                        : d.protocolo === 'sftp_push'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : d.protocolo === 'tftp_push'
-                            ? 'bg-orange-500/20 text-orange-300'
-                            : 'bg-sky-500/20 text-sky-400'
+                      : d.protocolo === 'api'
+                        ? 'bg-pink-500/20 text-pink-400'
+                        : d.protocolo === 'ftp_push'
+                          ? 'bg-violet-500/20 text-violet-300'
+                          : d.protocolo === 'sftp_push'
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : d.protocolo === 'tftp_push'
+                              ? 'bg-orange-500/20 text-orange-300'
+                              : 'bg-sky-500/20 text-sky-400'
                   }`}>
                     {PUSH_PROTOCOLS.includes(d.protocolo) && <Upload size={11} />}
                     {PROTOCOL_LABEL[d.protocolo] || 'SSH'}
+                    {d.protocolo === 'api' && d.api_tls && <span className="text-[10px] opacity-70">TLS</span>}
                   </span>
                 </td>
                 <td className="px-5 py-3.5">
@@ -1454,6 +1465,7 @@ export default function Devices() {
                   {[
                     { p: 'ssh',       cls: 'text-sky-400',     desc: 'servidor conecta via SSH' },
                     { p: 'telnet',    cls: 'text-orange-400',  desc: 'servidor conecta via Telnet (legado)' },
+                    { p: 'api',       cls: 'text-pink-400',    desc: 'RouterOS API binária (Mikrotik v6/v7)' },
                     { p: 'sftp_push', cls: 'text-emerald-300', desc: 'equipamento envia via SFTP (criptografado)' },
                     { p: 'ftp_push',  cls: 'text-violet-300',  desc: 'equipamento envia via FTP (plano)' },
                     { p: 'tftp_push', cls: 'text-orange-300',  desc: 'equipamento envia via TFTP (sem auth)' },
@@ -1464,6 +1476,8 @@ export default function Devices() {
                     if (PUSH_PROTOCOLS.includes(p)) return false
                     // ZTE C3XX: SSH bloqueado (rate-limit interno trunca coleta).
                     if (form.fabricante === 'zte' && p === 'ssh') return false
+                    // RouterOS API binária: só faz sentido em Mikrotik v6/v7.
+                    if (p === 'api' && !['mikrotik', 'mikrotik_v7'].includes(form.fabricante)) return false
                     return true
                   }).map(({ p, cls, desc }) => (
                     <label key={p} className="flex items-center gap-2 cursor-pointer">
@@ -1472,13 +1486,20 @@ export default function Devices() {
                         name="protocolo"
                         value={p}
                         checked={form.protocolo === p}
-                        onChange={() => setForm(f => ({
-                          ...f,
-                          protocolo: p,
-                          porta: f.porta === DEFAULT_PORTS[f.protocolo] ? DEFAULT_PORTS[p] : f.porta,
-                          // Telnet/Push não usam chave SSH — força senha
-                          auth_method: (p === 'telnet' || PUSH_PROTOCOLS.includes(p)) ? 'password' : f.auth_method,
-                        }))}
+                        onChange={() => setForm(f => {
+                          // Porta atual era o default do protocolo anterior?
+                          // (vale também pra `api` que pode ter porta 8728 ou 8729 conforme TLS)
+                          const apiPortaAtual = f.protocolo === 'api' && f.api_tls ? API_PORT_TLS : DEFAULT_PORTS[f.protocolo]
+                          const portaDefaultAtual = f.protocolo === 'api' ? apiPortaAtual : DEFAULT_PORTS[f.protocolo]
+                          const novaPorta = p === 'api' ? (f.api_tls ? API_PORT_TLS : DEFAULT_PORTS.api) : DEFAULT_PORTS[p]
+                          return {
+                            ...f,
+                            protocolo: p,
+                            porta: f.porta === portaDefaultAtual ? novaPorta : f.porta,
+                            // Telnet / Push / API não usam chave SSH — força senha
+                            auth_method: (p === 'telnet' || p === 'api' || PUSH_PROTOCOLS.includes(p)) ? 'password' : f.auth_method,
+                          }
+                        })}
                         className="accent-sky-500"
                       />
                       <span className={`text-sm font-medium ${cls}`}>
@@ -1488,6 +1509,28 @@ export default function Devices() {
                     </label>
                   ))}
                 </div>
+                {/* Checkbox TLS — só faz sentido em protocolo=api (RouterOS API
+                    binária). Toggle muda a porta entre 8728 (plain) e 8729 (TLS)
+                    automaticamente, exceto se o usuário já mudou a porta manual. */}
+                {form.protocolo === 'api' && (
+                  <label className="flex items-center gap-2 mt-3 cursor-pointer text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={!!form.api_tls}
+                      onChange={e => setForm(f => ({
+                        ...f,
+                        api_tls: e.target.checked,
+                        // Auto-trocar porta APENAS se ela ainda for o default do estado anterior.
+                        porta: f.porta === (f.api_tls ? API_PORT_TLS : DEFAULT_PORTS.api)
+                          ? (e.target.checked ? API_PORT_TLS : DEFAULT_PORTS.api)
+                          : f.porta,
+                      }))}
+                      className="accent-pink-500"
+                    />
+                    <span>Conexão TLS (porta {API_PORT_TLS})</span>
+                    <span className="text-xs text-slate-500">— exige cert configurado no Mikrotik</span>
+                  </label>
+                )}
               </div>
               )}
             </div>

@@ -28,7 +28,8 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
         # FTP/SFTP/TFTP push: novos valores no enum protocolo + atividades relacionadas
-        for proto in ("ftp_push", "sftp_push", "tftp_push"):
+        # 'api' adicionado em v1.4.0 (RouterOS API binária — Mikrotik v6+v7)
+        for proto in ("ftp_push", "sftp_push", "tftp_push", "api"):
             try:
                 await conn.execute(text(f"ALTER TYPE protocolo ADD VALUE IF NOT EXISTS '{proto}'"))
             except Exception:
@@ -234,6 +235,13 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("""
             ALTER TABLE devices
             ADD COLUMN IF NOT EXISTS ftp_origem_cidr VARCHAR(64)
+        """))
+
+        # 8.1.api) devices.api_tls — usado quando protocolo='api' (RouterOS API).
+        # false = porta 8728 plain; true = porta 8729 TLS. Adicionado em v1.4.0.
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS api_tls BOOLEAN NOT NULL DEFAULT FALSE
         """))
 
         # 8.1) devices: campos de autenticação por chave SSH

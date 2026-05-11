@@ -28,6 +28,10 @@ class DeviceVendor(str, enum.Enum):
 class Protocolo(str, enum.Enum):
     ssh = "ssh"
     telnet = "telnet"
+    # RouterOS API binária (Mikrotik v6+v7): porta 8728 (plain) ou 8729 (TLS).
+    # Coleta /export sem precisar abrir SSH/Telnet no equipamento. TLS é
+    # configurado por device via Device.api_tls (default False).
+    api = "api"
     # Modos de PUSH: equipamento envia o backup pro servidor.
     # ftp_push   = FTP (porta 21, plano, user+senha+IP)
     # sftp_push  = SFTP via SSH (porta 22, criptografado, user+senha+IP)
@@ -124,6 +128,11 @@ class Device(Base):
     ftp_user = Column(String(64), nullable=True, unique=True)
     ftp_senha_enc = Column(Text, nullable=True)
     ftp_origem_cidr = Column(String(64), nullable=True)  # ex.: 187.123.45.10/32 ou 187.123.45.0/24
+    # RouterOS API: true = TLS na porta 8729, false = plain na porta 8728.
+    # Só consultado quando protocolo == 'api'. Default False (sem TLS) porque
+    # Mikrotik não vem com cert válido out-of-the-box; TLS exige config extra
+    # no equipamento (gerar + bind cert). Plain é OK em LAN privada confiável.
+    api_tls = Column(Boolean, nullable=False, default=False)
     ativo = Column(Boolean, default=True)
     empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

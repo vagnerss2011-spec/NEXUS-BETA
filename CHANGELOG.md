@@ -12,6 +12,20 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.0] - 2026-05-10
+
+### Adicionado
+
+- **Novo protocolo de coleta: `api` — RouterOS API binária** para Mikrotik v6 e v7. Convive com SSH/Telnet existentes (não substitui). Selecionável no formulário de Novo/Editar Dispositivo somente quando fabricante é `mikrotik` ou `mikrotik_v7`. Vantagem sobre SSH: não exige abrir SSH no equipamento, sem problemas de detecção de prompt dinâmico, e a coleta usa o canal API nativo do RouterOS.
+- **TLS configurável por device** via checkbox quando protocolo=API. Plain = porta 8728 (default), TLS = porta 8729. TLS aceita self-signed (Mikrotik não vem com cert publicamente confiável — admin pode gerar self-signed via `/certificate`). Badge na lista de devices mostra `TLS` sutilmente quando ativo.
+- **`backend/services/mikrotik_api.py`** dedicado, usando `librouteros==3.4.0`. Implementa Plano A (export direto via API — alguns firmwares retornam linhas em replies) com fallback automático pro Plano B (escreve arquivo temp + lê via `/file/print detail` + remove). Compatível com `/export show-sensitive=yes` em v7 (com fallback se firmware rejeitar).
+- **Schema migration** (idempotente): novo valor `api` no enum `protocolo` + coluna `api_tls BOOLEAN NOT NULL DEFAULT FALSE` em `devices`.
+
+### Sabidos
+
+- API binária Mikrotik **não suporta autenticação por chave SSH** (só usuário + senha). O frontend bloqueia auth por chave quando protocolo=API e o backend recusa explicitamente.
+- O `/export` via API binária tem variações por firmware (alguns retornam linhas no reply, outros só escrevem arquivo). O fallback automático cobre a maioria dos casos, mas firmwares muito antigos podem falhar — nesses casos, manter SSH como protocolo.
+
 ## [1.3.4] - 2026-05-10
 
 ### Corrigido
