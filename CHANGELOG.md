@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.2.7] - 2026-05-10
+
+### Corrigido
+
+- **Backup SSH de ZTE C320 ainda truncava em ~5760 linhas mesmo após v1.2.5/v1.2.6** (configs com 6200+ linhas voltavam sem as seções finais `username`, `snmp`, `ntp`, `ssh server`, etc.). Diagnosticado via `ZTE_DEBUG_LOG=1`: a OLT pausa >30s entre as seções `pon-onu-mng` e o resto da config quando tem muitas ONUs, e o loop de coleta saía por `IDLE_TIMEOUT`. Fix: detectar a linha literal `end` (marca natural de fim do `show running-config` ZTE/Cisco-like) via regex e encerrar o loop na hora, sem depender de idle timeout. `IDLE_TIMEOUT` ainda subiu de `30s`→`60s` como fallback pra caso `end` não venha (erro de comando, sessão derrubada).
+
 ## [1.2.6] - 2026-05-10
 
 ### Adicionado

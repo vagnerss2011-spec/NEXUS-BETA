@@ -298,12 +298,18 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
         start = time.time()
         last_data = time.time()
         next_more_search = 0
-        # IDLE_TIMEOUT generoso (30s) porque ZTE C320 com running-config grande
-        # (20k+ linhas) pausa por 10-20s entre páginas pra liberar buffer interno.
-        # Com 8s o loop saía cedo e retornava parcial. TOTAL_TIMEOUT 15min cobre
-        # configs muito grandes (validado: 5900 linhas em ~2min de coleta normal).
+        # ZTE imprime a linha literal `end` (sozinha) no fim do running-config —
+        # mesma convenção do Cisco IOS. Detectar essa marca permite sair na hora
+        # quando o output terminou, em vez de esperar IDLE_TIMEOUT só pra
+        # confirmar fim de stream. Sem isso, OLT que pausa >IDLE entre seções
+        # internas (pon-onu-mng → username/snmp/ntp em config grande) faz o loop
+        # sair cedo e retornar truncado — bug observado em v1.2.5/v1.2.6.
+        # Procuro apenas nos últimos 200 chars pra performance em output grande.
+        _END_RE = re.compile(r"\nend\r?\n")
+        # IDLE/TOTAL_TIMEOUT viram fallback pra caso `end` não venha (erro de
+        # comando, conexão derrubada no meio, etc.). 60s tolera pausas longas.
         TOTAL_TIMEOUT = 900
-        IDLE_TIMEOUT = 30.0
+        IDLE_TIMEOUT = 60.0
         while True:
             now = time.time()
             if now - start > TOTAL_TIMEOUT:
@@ -316,6 +322,8 @@ def _run_zte_netmiko(device: Device) -> tuple[str, str]:
                 if m:
                     net.write_channel(" ")
                     next_more_search = m.end()
+                if _END_RE.search(output, max(0, len(output) - 200)):
+                    break
             else:
                 if now - last_data > IDLE_TIMEOUT:
                     break
