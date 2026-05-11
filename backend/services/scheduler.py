@@ -36,9 +36,12 @@ async def executar_backups():
             # via servidor embutido. Não devem ser polados pelo scheduler — não
             # têm credencial SSH cadastrada e geravam falso-positivo de "senha
             # não cadastrada" no alerta Telegram.
+            # Também filtra devices marcados como "manual apenas" (admin pediu
+            # explicitamente pra não rodar no automático).
             result = await db.execute(
                 select(Device).where(
                     Device.ativo == True,
+                    Device.backup_manual_apenas == False,
                     Device.protocolo.notin_((
                         Protocolo.ftp_push, Protocolo.sftp_push, Protocolo.tftp_push,
                     )),

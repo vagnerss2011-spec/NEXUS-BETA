@@ -209,6 +209,7 @@ async def criar_device(
         chave_passphrase_enc=passphrase_enc,
         ftp_origem_cidr=ftp_origem_cidr,
         api_tls=data.api_tls,
+        backup_manual_apenas=data.backup_manual_apenas,
         empresa_id=empresa_id,
     )
     db.add(device)

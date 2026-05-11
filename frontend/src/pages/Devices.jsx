@@ -33,7 +33,7 @@ const TIPOS = [
   { value: 'unm2000', label: 'UNM2000 (NMS)' },
 ]
 const TIPO_LABEL = Object.fromEntries(TIPOS.map(t => [t.value, t.label]))
-const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '', ftp_origem_cidr: '', api_tls: false }
+const BLANK = { nome: '', ip: '', porta: 22, fabricante: 'mikrotik', tipo: 'roteador', protocolo: 'ssh', usuario_ssh: '', senha_ssh: '', auth_method: 'password', chave_privada: '', chave_passphrase: '', ftp_origem_cidr: '', api_tls: false, backup_manual_apenas: false }
 const STATUS_FILTROS = [
   { value: 'todos', label: 'Todos os status' },
   { value: 'sucesso', label: 'Backup com sucesso' },
@@ -763,6 +763,9 @@ export default function Devices() {
         protocolo: form.protocolo,
         usuario_ssh: form.usuario_ssh || null,
         auth_method: authMethod,
+        // backup_manual_apenas só faz sentido fora do fluxo push (em push,
+        // o equipamento controla quando enviar — não há "rodar manual" do nosso lado).
+        backup_manual_apenas: !isPush && !!form.backup_manual_apenas,
         empresa_id: empresa?.id,
       }
       if (isApi) {
@@ -986,8 +989,17 @@ export default function Devices() {
               <tr key={d.id} className="hover:bg-slate-700/40 transition-colors">
                 <td className="px-5 py-3.5 text-xs font-mono text-slate-400">{formatDeviceId(d.id)}</td>
                 <td className="px-5 py-3.5 font-medium text-white">
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2 flex-wrap">
                     <Router size={16} className="text-sky-400" />{d.nome}
+                    {/* Sinaliza que o device NÃO entra no scheduler diário —
+                        ajuda o admin a entender por que esse device não aparece
+                        no log do scheduler ou parece "atrasado". */}
+                    {d.backup_manual_apenas && (
+                      <span title="Backup só roda no clique manual — fora do agendamento diário"
+                        className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                        manual
+                      </span>
+                    )}
                   </span>
                 </td>
                 <td className="px-5 py-3.5 text-slate-300 font-mono">{formatHostPort(d.ip, d.porta)}</td>
@@ -1637,6 +1649,25 @@ export default function Devices() {
                     <span className="text-xs text-slate-500">— exige cert configurado no Mikrotik</span>
                   </label>
                 )}
+                {/* Backup manual apenas — quando marcado, este device fica de
+                    fora do scheduler diário (02:00). Útil pra equipamentos que
+                    o admin prefere coletar sob demanda (sandbox, lab, etc).
+                    Botão "Executar backup" continua funcionando normal e a
+                    retenção (max N backups) também. */}
+                <label className="flex items-start gap-2 mt-3 cursor-pointer text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={!!form.backup_manual_apenas}
+                    onChange={e => setForm(f => ({ ...f, backup_manual_apenas: e.target.checked }))}
+                    className="accent-amber-500 mt-0.5"
+                  />
+                  <span>
+                    Somente backup manual
+                    <span className="block text-xs text-slate-500 mt-0.5">
+                      Pula o agendamento automático diário — o backup só roda quando você clicar em "Executar backup". A retenção configurada continua valendo.
+                    </span>
+                  </span>
+                </label>
               </div>
               )}
             </div>

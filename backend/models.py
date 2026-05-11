@@ -133,6 +133,12 @@ class Device(Base):
     # Mikrotik não vem com cert válido out-of-the-box; TLS exige config extra
     # no equipamento (gerar + bind cert). Plain é OK em LAN privada confiável.
     api_tls = Column(Boolean, nullable=False, default=False)
+    # Quando True, este device NÃO entra no scheduler diário; só roda backup
+    # quando o admin clica "Executar backup" no painel. A retenção (max N
+    # backups por device, controlada por BACKUP_RETENTION_DAYS no .env)
+    # continua valendo — mesmo em manual o histórico fica limitado.
+    # Default False preserva comportamento pré-feature (automático todo dia).
+    backup_manual_apenas = Column(Boolean, nullable=False, default=False)
     ativo = Column(Boolean, default=True)
     empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="CASCADE"), nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

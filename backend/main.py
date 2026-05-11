@@ -244,6 +244,14 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS api_tls BOOLEAN NOT NULL DEFAULT FALSE
         """))
 
+        # 8.1.manual) devices.backup_manual_apenas — quando TRUE, o scheduler
+        # diário pula o device (só roda no clique manual). Default FALSE
+        # preserva comportamento histórico de "todo device cadastrado roda às 02:00".
+        await conn.execute(text("""
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS backup_manual_apenas BOOLEAN NOT NULL DEFAULT FALSE
+        """))
+
         # 8.1) devices: campos de autenticação por chave SSH
         await conn.execute(text("""
             ALTER TABLE devices
