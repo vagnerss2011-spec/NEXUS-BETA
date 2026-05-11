@@ -213,6 +213,28 @@ class Configuracao(Base):
     # sucesso + telemetria; descem pela metade ao detectar stress.
     # OFF: trava em 1 worker (comportamento legado pré-v2.x, sequencial).
     backup_workers_auto = Column(Boolean, nullable=False, default=True)
+    # ===== Export do banco em .nxbak (major v2.0.0) =====
+    # Snapshot diário criptografado de todos os backups armazenados — pra
+    # poder recuperar o histórico mesmo se o servidor queimar/corromper.
+    # Aberto apenas pela ferramenta externa que conhece o formato + chave Fernet.
+    db_export_enabled = Column(Boolean, nullable=False, default=True)
+    # Hora local da exportação diária. Default 03:30 — depois do scheduler
+    # diário (02:00) terminar de coletar backups novos.
+    db_export_hour = Column(Integer, nullable=False, default=3)
+    db_export_minute = Column(Integer, nullable=False, default=30)
+    # ===== Upload semanal pra "nuvem de segurança" externa =====
+    # Default OFF — admin precisa configurar conscientemente. Quando ON,
+    # 1× por semana o .nxbak mais recente é enviado pro servidor remoto.
+    db_export_remote_enabled = Column(Boolean, nullable=False, default=False)
+    db_export_remote_protocolo = Column(String(8), nullable=False, default="sftp")  # 'sftp' | 'ftp'
+    db_export_remote_host = Column(String(120), nullable=True)
+    db_export_remote_porta = Column(Integer, nullable=False, default=22)
+    db_export_remote_user = Column(String(120), nullable=True)
+    db_export_remote_senha_enc = Column(Text, nullable=True)  # cifrada com ENCRYPTION_KEY
+    db_export_remote_path = Column(String(255), nullable=False, default="/")
+    db_export_remote_dia_semana = Column(Integer, nullable=False, default=0)  # 0=segunda ... 6=domingo (cron-style)
+    db_export_remote_hora = Column(Integer, nullable=False, default=4)
+    db_export_remote_minute = Column(Integer, nullable=False, default=0)
     # ===== Telegram (alertas de falha/corrupção) =====
     # Token do bot (Fernet-encrypted). NULL = notificações Telegram desabilitadas.
     # 1 bot único pra toda a instalação; cada empresa pode ter seu chat_id próprio.

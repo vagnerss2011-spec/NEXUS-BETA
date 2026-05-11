@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     # Necessário porque o repo é privado — sem token a API GitHub
     # retorna 404 e nem dá pra ler tags/CHANGELOG.
     GITHUB_TOKEN: str = ""
+    # ===== Export do banco de backups (.nxbak — major v2.0.0) =====
+    # Chave Fernet DEDICADA pra criptografar os arquivos .nxbak (snapshot
+    # diário de todos os backups armazenados). PROPOSITALMENTE separada da
+    # ENCRYPTION_KEY que cifra senhas SSH no banco — se uma vazar, a outra
+    # mantém os dados seguros. Gerar com:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Vazia = export local desabilitado (Settings.db_export_enabled vira no-op).
+    # SEM ESSA CHAVE, .nxbak não pode ser aberto nem pela ferramenta externa
+    # de leitura — guarde em local separado do servidor (cofre, password manager).
+    DB_EXPORT_KEY: str = ""
 
     class Config:
         env_file = ".env"

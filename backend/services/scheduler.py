@@ -633,6 +633,60 @@ async def purgar_logs_antigos():
         await db.commit()
 
 
+# ===== Export do banco em .nxbak (v2.0.0) =====
+
+DB_EXPORT_JOB_ID = "db_export_diario"
+DB_EXPORT_REMOTE_JOB_ID = "db_export_remoto_semanal"
+
+
+async def executar_db_export_local():
+    """Job diário: gera o .nxbak com snapshot do banco e aplica retenção."""
+    from services import db_export as _dbex
+    async with AsyncSessionLocal() as db:
+        config = (await db.execute(select(Configuracao))).scalar_one_or_none()
+        if config is None or not config.db_export_enabled:
+            log.info("DB export pulado (db_export_enabled=false)")
+            return
+        try:
+            arquivo = await _dbex.exportar_para_arquivo(db)
+            if arquivo is None:
+                # DB_EXPORT_KEY ausente — já loggou warning
+                await _enviar_alerta_falha_export(
+                    db, "DB_EXPORT_KEY não configurada no .env",
+                )
+                return
+            _dbex.aplicar_retencao()
+        except Exception as e:
+            log.exception("DB export falhou")
+            await _enviar_alerta_falha_export(db, str(e))
+
+
+async def executar_db_export_remoto():
+    """Job semanal: envia o .nxbak mais recente pra nuvem de segurança."""
+    from services import db_export as _dbex
+    async with AsyncSessionLocal() as db:
+        config = (await db.execute(select(Configuracao))).scalar_one_or_none()
+        if config is None or not config.db_export_remote_enabled:
+            log.info("DB export remoto pulado (db_export_remote_enabled=false)")
+            return
+        ok, msg = await _dbex.enviar_mais_recente_pra_nuvem(db)
+        if not ok:
+            await _enviar_alerta_falha_export(db, f"Upload remoto falhou: {msg}")
+
+
+async def _enviar_alerta_falha_export(db: AsyncSession, motivo: str) -> None:
+    """Alerta Telegram (categoria falha_backup) quando export ou upload falham.
+    Diferente das falhas de coleta normais — esta é falha do mecanismo de
+    segurança em si, merece atenção do admin master."""
+    try:
+        titulo = "❌ Export do banco (.nxbak) falhou"
+        detalhes = f"<b>Motivo:</b> <i>{motivo[:400]}</i>"
+        # empresa_id=None → vai pro chat default global (admin master)
+        await enviar_alerta_async(db, titulo, detalhes, empresa_id=None, categoria="falha_backup")
+    except Exception:
+        log.exception("Falha ao enviar alerta Telegram do db-export")
+
+
 async def _carregar_horario() -> tuple[int, int]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Configuracao))
@@ -649,9 +703,49 @@ def atualizar_scheduler(hour: int, minute: int):
     scheduler.reschedule_job("backup_diario", trigger="cron", hour=hour, minute=minute)
 
 
+def atualizar_db_export_local(hour: int, minute: int):
+    """Reagenda o job de export diário do banco. Chamado pelo router quando
+    admin muda backup_export_hour/minute."""
+    if scheduler.get_job(DB_EXPORT_JOB_ID):
+        scheduler.reschedule_job(DB_EXPORT_JOB_ID, trigger="cron", hour=hour, minute=minute)
+
+
+def atualizar_db_export_remoto(dia_semana: int, hour: int, minute: int):
+    """Reagenda o job semanal de upload. dia_semana cron-style: 0=segunda,
+    6=domingo (mesma convenção que APScheduler usa em day_of_week)."""
+    if scheduler.get_job(DB_EXPORT_REMOTE_JOB_ID):
+        scheduler.reschedule_job(
+            DB_EXPORT_REMOTE_JOB_ID, trigger="cron",
+            day_of_week=dia_semana, hour=hour, minute=minute,
+        )
+
+
 async def iniciar_scheduler():
     hour, minute = await _carregar_horario()
     scheduler.add_job(executar_backups, "cron", hour=hour, minute=minute, id="backup_diario")
     # Purga de logs: todo dia às 03:00 (TZ do container — definido em docker-compose)
     scheduler.add_job(purgar_logs_antigos, "cron", hour=3, minute=0, id=PURGA_LOGS_JOB_ID)
+
+    # ===== Jobs do .nxbak (v2.0.0) =====
+    # Lê hora configurada (ou usa defaults se não existir Configuracao ainda).
+    async with AsyncSessionLocal() as db:
+        config = (await db.execute(select(Configuracao))).scalar_one_or_none()
+    h_export = config.db_export_hour if config else 3
+    m_export = config.db_export_minute if config else 30
+    dow_remoto = config.db_export_remote_dia_semana if config else 0
+    h_remoto = config.db_export_remote_hora if config else 4
+    m_remoto = config.db_export_remote_minute if config else 0
+    # Diário: sempre registrado. O job em si checa db_export_enabled e pula
+    # se desligado — assim admin pode ligar/desligar via UI sem precisar
+    # reagendar o job.
+    scheduler.add_job(
+        executar_db_export_local, "cron",
+        hour=h_export, minute=m_export, id=DB_EXPORT_JOB_ID,
+    )
+    # Semanal: idem — job checa db_export_remote_enabled e pula.
+    scheduler.add_job(
+        executar_db_export_remoto, "cron",
+        day_of_week=dow_remoto, hour=h_remoto, minute=m_remoto,
+        id=DB_EXPORT_REMOTE_JOB_ID,
+    )
     scheduler.start()

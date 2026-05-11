@@ -46,6 +46,10 @@ services:
       # Se perder, equipamentos vão acusar fingerprint diferente no próximo
       # connect — daria pra forçar re-aceitação mas é melhor evitar.
       - ./infra/state:/var/lib/nexus
+      # Export criptografado do banco (.nxbak — v2.0.0). 1 arquivo por dia,
+      # retenção 7. Volume garante que se o container reiniciar não perde
+      # o histórico. Backup desse volume = backup-de-backups offsite.
+      - ./infra/db-export:/app/infra/db-export
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}
@@ -67,6 +71,9 @@ services:
       # Repo no formato "owner/repo". Default vai pro repo oficial; instâncias
       # custom (fork interno, etc.) podem trocar via .env.
       GITHUB_REPO: ${GITHUB_REPO:-vagnerss2011-spec/NEXUS-BETA}
+      # Chave Fernet dedicada pra .nxbak (export criptografado do banco — v2.0.0).
+      # Vazia = export local desabilitado. GUARDAR EM LOCAL SEPARADO do servidor.
+      DB_EXPORT_KEY: ${DB_EXPORT_KEY:-}
     depends_on:
       db:
         condition: service_healthy

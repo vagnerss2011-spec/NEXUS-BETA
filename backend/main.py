@@ -282,6 +282,61 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS tempo_sob_stress_seg INTEGER
         """))
 
+        # Export diário do banco em .nxbak (criptografado) — config em Configuracao.
+        # Defaults: enabled true, 03:30 local, remoto disabled (admin configura).
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_enabled BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_hour INTEGER NOT NULL DEFAULT 3
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_minute INTEGER NOT NULL DEFAULT 30
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_enabled BOOLEAN NOT NULL DEFAULT FALSE
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_protocolo VARCHAR(8) NOT NULL DEFAULT 'sftp'
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_host VARCHAR(120)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_porta INTEGER NOT NULL DEFAULT 22
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_user VARCHAR(120)
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_senha_enc TEXT
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_path VARCHAR(255) NOT NULL DEFAULT '/'
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_dia_semana INTEGER NOT NULL DEFAULT 0
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_hora INTEGER NOT NULL DEFAULT 4
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS db_export_remote_minute INTEGER NOT NULL DEFAULT 0
+        """))
+
         # 8.0.2) empresas.telegram_chat_id (override do default global por empresa)
         await conn.execute(text("""
             ALTER TABLE empresas

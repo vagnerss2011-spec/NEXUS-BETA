@@ -6,11 +6,15 @@ from models import Configuracao, UserRole
 from schemas import (
     ScheduleOut, ScheduleUpdate,
     TelegramConfigOut, TelegramConfigUpdate, TelegramTestRequest,
+    DbExportConfigOut, DbExportConfigUpdate,
 )
 from auth import require_role
-from services.scheduler import atualizar_scheduler
+from services.scheduler import (
+    atualizar_scheduler, atualizar_db_export_local, atualizar_db_export_remoto,
+)
 from services.crypto import encrypt
 from services.telegram import enviar_teste_async
+from services import db_export as _dbex
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -161,4 +165,134 @@ async def post_telegram_test(
     própria empresa antes de salvar; admin master testa o default global ou
     qualquer chat fornecido."""
     ok, msg = await enviar_teste_async(db, chat_id_explicito=body.chat_id)
+    return {"ok": ok, "mensagem": msg}
+
+
+# ===== Export do banco (.nxbak — v2.0.0) =====
+# Só admin master gerencia. A senha do servidor remoto NUNCA é exposta pela
+# API — só um booleano "configurada".
+
+async def _montar_db_export_out(db: AsyncSession) -> DbExportConfigOut:
+    """Helper que monta o response do GET/PUT — reusado por ambos endpoints."""
+    config = await _get_or_create_config(db)
+    fernet = _dbex.get_fernet()
+    arquivos = _dbex.listar_arquivos_locais()
+    return DbExportConfigOut(
+        db_export_enabled=config.db_export_enabled,
+        db_export_hour=config.db_export_hour,
+        db_export_minute=config.db_export_minute,
+        db_export_remote_enabled=config.db_export_remote_enabled,
+        db_export_remote_protocolo=config.db_export_remote_protocolo,
+        db_export_remote_host=config.db_export_remote_host,
+        db_export_remote_porta=config.db_export_remote_porta,
+        db_export_remote_user=config.db_export_remote_user,
+        db_export_remote_senha_configurada=bool(config.db_export_remote_senha_enc),
+        db_export_remote_path=config.db_export_remote_path,
+        db_export_remote_dia_semana=config.db_export_remote_dia_semana,
+        db_export_remote_hora=config.db_export_remote_hora,
+        db_export_remote_minute=config.db_export_remote_minute,
+        chave_configurada=fernet is not None,
+        arquivos_locais=[
+            {
+                "nome": f.name,
+                "tamanho_bytes": f.stat().st_size,
+                "modificado_em": f.stat().st_mtime,
+            } for f in arquivos
+        ],
+    )
+
+
+@router.get("/db-export", response_model=DbExportConfigOut)
+async def get_db_export(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(UserRole.admin)),
+):
+    return await _montar_db_export_out(db)
+
+
+@router.put("/db-export", response_model=DbExportConfigOut)
+async def put_db_export(
+    body: DbExportConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(UserRole.admin)),
+):
+    # Validações
+    if body.db_export_hour is not None and not (0 <= body.db_export_hour <= 23):
+        raise HTTPException(status_code=422, detail="Hora do export deve ser 0-23")
+    if body.db_export_minute is not None and not (0 <= body.db_export_minute <= 59):
+        raise HTTPException(status_code=422, detail="Minuto do export deve ser 0-59")
+    if body.db_export_remote_protocolo is not None and body.db_export_remote_protocolo not in ("sftp", "ftp"):
+        raise HTTPException(status_code=422, detail="Protocolo deve ser 'sftp' ou 'ftp'")
+    if body.db_export_remote_porta is not None and not (1 <= body.db_export_remote_porta <= 65535):
+        raise HTTPException(status_code=422, detail="Porta inválida")
+    if body.db_export_remote_dia_semana is not None and not (0 <= body.db_export_remote_dia_semana <= 6):
+        raise HTTPException(status_code=422, detail="Dia da semana deve ser 0-6 (0=segunda, 6=domingo)")
+    if body.db_export_remote_hora is not None and not (0 <= body.db_export_remote_hora <= 23):
+        raise HTTPException(status_code=422, detail="Hora remota deve ser 0-23")
+    if body.db_export_remote_minute is not None and not (0 <= body.db_export_remote_minute <= 59):
+        raise HTTPException(status_code=422, detail="Minuto remoto deve ser 0-59")
+
+    config = await _get_or_create_config(db)
+    # Aplica apenas campos enviados (não-None).
+    for campo in (
+        "db_export_enabled", "db_export_hour", "db_export_minute",
+        "db_export_remote_enabled", "db_export_remote_protocolo",
+        "db_export_remote_host", "db_export_remote_porta",
+        "db_export_remote_user", "db_export_remote_path",
+        "db_export_remote_dia_semana", "db_export_remote_hora",
+        "db_export_remote_minute",
+    ):
+        val = getattr(body, campo)
+        if val is not None:
+            setattr(config, campo, val)
+    # Senha: regra especial (None = não tocar; '' = limpar; valor = encrypt).
+    if body.db_export_remote_senha is not None:
+        if body.db_export_remote_senha == "":
+            config.db_export_remote_senha_enc = None
+        else:
+            config.db_export_remote_senha_enc = encrypt(body.db_export_remote_senha)
+
+    await db.commit()
+    await db.refresh(config)
+
+    # Reagenda os jobs do scheduler pra refletir mudança de horário.
+    try:
+        atualizar_db_export_local(config.db_export_hour, config.db_export_minute)
+        atualizar_db_export_remoto(
+            config.db_export_remote_dia_semana,
+            config.db_export_remote_hora, config.db_export_remote_minute,
+        )
+    except Exception:
+        # Reagendar pode falhar se o scheduler ainda não iniciou (raro).
+        # Não bloqueia o save — próxima boot lê do banco.
+        pass
+
+    return await _montar_db_export_out(db)
+
+
+@router.post("/db-export/run-now")
+async def post_db_export_run_now(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(UserRole.admin)),
+):
+    """Botão 'Exportar agora' — dispara export local imediato pra testar
+    sem esperar a próxima janela. Mesmo fluxo do job scheduler diário."""
+    arquivo = await _dbex.exportar_para_arquivo(db)
+    if arquivo is None:
+        raise HTTPException(
+            status_code=400,
+            detail="DB_EXPORT_KEY não configurada no .env — export desabilitado",
+        )
+    _dbex.aplicar_retencao()
+    return {"ok": True, "arquivo": arquivo.name, "tamanho_bytes": arquivo.stat().st_size}
+
+
+@router.post("/db-export/upload-now")
+async def post_db_export_upload_now(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(UserRole.admin)),
+):
+    """Botão 'Enviar agora' — força upload do .nxbak mais recente pro remoto.
+    Útil pra validar config (host/user/senha/path) sem esperar a janela semanal."""
+    ok, msg = await _dbex.enviar_mais_recente_pra_nuvem(db)
     return {"ok": ok, "mensagem": msg}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Clock, Save, ScrollText, Bell, Send, AlertTriangle, Gauge, Cpu } from 'lucide-react'
+import { Clock, Save, ScrollText, Bell, Send, AlertTriangle, Gauge, Cpu, ShieldCheck, Download, Cloud, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react'
 import api from '../services/api'
 
 // Converte dias <-> exibição em dias/meses (mês = 30 dias)
@@ -31,6 +31,15 @@ export default function Settings() {
   const [cpuLimite, setCpuLimite] = useState(80)
   const [memLimite, setMemLimite] = useState(80)
   const [workersAuto, setWorkersAuto] = useState(true)
+
+  // ===== Export do banco em .nxbak (admin master) — v2.0.0 =====
+  const [dbExport, setDbExport] = useState(null)  // null = não carregado ainda
+  const [dbExportSaving, setDbExportSaving] = useState(false)
+  const [dbExportMessage, setDbExportMessage] = useState(null)
+  const [dbExportSenha, setDbExportSenha] = useState('')  // '' = não tocar; 'apagar' = limpar; outro = setar
+  const [mostrarSenhaExport, setMostrarSenhaExport] = useState(false)
+  const [executandoExport, setExecutandoExport] = useState(false)
+  const [executandoUpload, setExecutandoUpload] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -75,8 +84,81 @@ export default function Settings() {
           setTgAlertaVolume(r.data.alerta_volume_alto)
         })
         .catch(() => {})  // se falhar (sem permissão), só não mostra
+
+      // Export do banco — também só admin master
+      api.get('/settings/db-export')
+        .then(r => setDbExport(r.data))
+        .catch(() => {})
     }
   }, [isMaster])
+
+  // ===== Funções db-export =====
+  function dbExportPatch(patch) {
+    setDbExport(prev => ({ ...prev, ...patch }))
+  }
+
+  async function salvarDbExport() {
+    setDbExportSaving(true)
+    setDbExportMessage(null)
+    try {
+      const payload = {
+        db_export_enabled: dbExport.db_export_enabled,
+        db_export_hour: Number(dbExport.db_export_hour),
+        db_export_minute: Number(dbExport.db_export_minute),
+        db_export_remote_enabled: dbExport.db_export_remote_enabled,
+        db_export_remote_protocolo: dbExport.db_export_remote_protocolo,
+        db_export_remote_host: dbExport.db_export_remote_host || null,
+        db_export_remote_porta: Number(dbExport.db_export_remote_porta),
+        db_export_remote_user: dbExport.db_export_remote_user || null,
+        db_export_remote_path: dbExport.db_export_remote_path || '/',
+        db_export_remote_dia_semana: Number(dbExport.db_export_remote_dia_semana),
+        db_export_remote_hora: Number(dbExport.db_export_remote_hora),
+        db_export_remote_minute: Number(dbExport.db_export_remote_minute),
+      }
+      // Senha: '' = não tocar; 'apagar' = limpar; outro = setar
+      if (dbExportSenha === 'apagar') payload.db_export_remote_senha = ''
+      else if (dbExportSenha && dbExportSenha.length > 0) payload.db_export_remote_senha = dbExportSenha
+      const { data } = await api.put('/settings/db-export', payload)
+      setDbExport(data)
+      setDbExportSenha('')
+      setDbExportMessage({ type: 'success', text: 'Configuração de export salva.' })
+    } catch (err) {
+      setDbExportMessage({ type: 'error', text: err?.response?.data?.detail || 'Erro ao salvar.' })
+    } finally {
+      setDbExportSaving(false)
+    }
+  }
+
+  async function executarExportAgora() {
+    setExecutandoExport(true)
+    setDbExportMessage(null)
+    try {
+      const { data } = await api.post('/settings/db-export/run-now')
+      setDbExportMessage({ type: 'success', text: `Export gerado: ${data.arquivo} (${(data.tamanho_bytes / 1024).toFixed(1)} KB)` })
+      const r = await api.get('/settings/db-export')
+      setDbExport(r.data)
+    } catch (err) {
+      setDbExportMessage({ type: 'error', text: err?.response?.data?.detail || 'Falha ao exportar.' })
+    } finally {
+      setExecutandoExport(false)
+    }
+  }
+
+  async function executarUploadAgora() {
+    setExecutandoUpload(true)
+    setDbExportMessage(null)
+    try {
+      const { data } = await api.post('/settings/db-export/upload-now')
+      setDbExportMessage({
+        type: data.ok ? 'success' : 'error',
+        text: data.mensagem || (data.ok ? 'Upload enviado.' : 'Falha no upload.'),
+      })
+    } catch (err) {
+      setDbExportMessage({ type: 'error', text: err?.response?.data?.detail || 'Erro no upload.' })
+    } finally {
+      setExecutandoUpload(false)
+    }
+  }
 
   async function handleSave(e) {
     e.preventDefault()
@@ -474,6 +556,225 @@ export default function Settings() {
               >
                 <Send size={16} />
                 {tgTestando ? 'Enviando...' : 'Enviar teste'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Export do Banco (.nxbak) — só admin master ===== */}
+      {isMaster && dbExport && (
+        <div className="bg-slate-800 border border-slate-700 rounded-xl max-w-3xl">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
+            <ShieldCheck size={18} className="text-slate-400" />
+            <h2 className="font-semibold text-white">Export do Banco (.nxbak)</h2>
+            <span className="text-xs text-amber-400 ml-auto">v2.0.0</span>
+          </div>
+          <div className="p-4 sm:p-5 space-y-5">
+            <p className="text-xs text-slate-500">
+              Backup criptografado de todos os backups armazenados — pra recuperar mesmo se o servidor queimar.
+              Gerado diariamente em formato proprietário, aberto só pela ferramenta externa que conhece o formato + a chave Fernet (<code className="text-slate-400">DB_EXPORT_KEY</code> no <code>.env</code>).
+            </p>
+
+            {/* Status da chave */}
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
+              dbExport.chave_configurada
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+            }`}>
+              {dbExport.chave_configurada ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+              <span>
+                {dbExport.chave_configurada
+                  ? <>Chave de criptografia configurada — export funcional.</>
+                  : <><b>DB_EXPORT_KEY não configurada no .env</b> — export desabilitado até admin gerar e setar a chave.</>}
+              </span>
+            </div>
+
+            {/* Export local diário */}
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!dbExport.db_export_enabled}
+                  onChange={e => dbExportPatch({ db_export_enabled: e.target.checked })}
+                  className="accent-sky-500"
+                />
+                <span className="text-slate-300">Export diário local ligado</span>
+              </label>
+              <div className="flex items-center gap-3 ml-6">
+                <span className="text-xs text-slate-400">Horário:</span>
+                <select value={dbExport.db_export_hour}
+                  onChange={e => dbExportPatch({ db_export_hour: Number(e.target.value) })}
+                  className="bg-slate-700 border border-slate-600 text-white rounded-lg px-2 py-1 text-sm">
+                  {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{pad(i)}h</option>)}
+                </select>
+                <select value={dbExport.db_export_minute}
+                  onChange={e => dbExportPatch({ db_export_minute: Number(e.target.value) })}
+                  className="bg-slate-700 border border-slate-600 text-white rounded-lg px-2 py-1 text-sm">
+                  {[0, 15, 30, 45].map(m => <option key={m} value={m}>{pad(m)}min</option>)}
+                </select>
+                <span className="text-xs text-slate-500">— retenção fixa: 7 arquivos</span>
+              </div>
+            </div>
+
+            {/* Upload remoto semanal */}
+            <div className="border-t border-slate-700 pt-4 space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!dbExport.db_export_remote_enabled}
+                  onChange={e => dbExportPatch({ db_export_remote_enabled: e.target.checked })}
+                  className="accent-violet-500"
+                />
+                <Cloud size={14} className="text-violet-400" />
+                <span className="text-slate-300">Upload semanal pra nuvem de segurança</span>
+              </label>
+              <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${!dbExport.db_export_remote_enabled ? 'opacity-50' : ''}`}>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Protocolo</label>
+                  <select value={dbExport.db_export_remote_protocolo}
+                    onChange={e => {
+                      const novo = e.target.value
+                      dbExportPatch({
+                        db_export_remote_protocolo: novo,
+                        // Auto-troca porta padrão ao mudar protocolo (admin pode editar depois)
+                        db_export_remote_porta: novo === 'sftp' ? 22 : 21,
+                      })
+                    }}
+                    disabled={!dbExport.db_export_remote_enabled}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm">
+                    <option value="sftp">SFTP (criptografado)</option>
+                    <option value="ftp">FTP (legado, senha em claro)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Porta</label>
+                  <input type="number" min="1" max="65535"
+                    value={dbExport.db_export_remote_porta}
+                    onChange={e => dbExportPatch({ db_export_remote_porta: e.target.value })}
+                    disabled={!dbExport.db_export_remote_enabled}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs text-slate-400 mb-1">Host</label>
+                  <input type="text" placeholder="backup.example.com"
+                    value={dbExport.db_export_remote_host || ''}
+                    onChange={e => dbExportPatch({ db_export_remote_host: e.target.value })}
+                    disabled={!dbExport.db_export_remote_enabled}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Usuário</label>
+                  <input type="text"
+                    value={dbExport.db_export_remote_user || ''}
+                    onChange={e => dbExportPatch({ db_export_remote_user: e.target.value })}
+                    disabled={!dbExport.db_export_remote_enabled}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">
+                    Senha {dbExport.db_export_remote_senha_configurada && <span className="text-emerald-400">· configurada</span>}
+                  </label>
+                  <div className="relative">
+                    <input type={mostrarSenhaExport ? 'text' : 'password'}
+                      value={dbExportSenha}
+                      placeholder={dbExport.db_export_remote_senha_configurada ? '(deixe vazio pra manter)' : 'digite a senha'}
+                      onChange={e => setDbExportSenha(e.target.value)}
+                      disabled={!dbExport.db_export_remote_enabled}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 pr-9 text-sm" />
+                    <button type="button" onClick={() => setMostrarSenhaExport(!mostrarSenhaExport)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                      {mostrarSenhaExport ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                  {dbExport.db_export_remote_senha_configurada && (
+                    <button type="button" onClick={() => setDbExportSenha('apagar')}
+                      className="text-[11px] text-red-400 hover:text-red-300 mt-1">
+                      {dbExportSenha === 'apagar' ? '✓ será removida ao salvar' : 'Remover senha salva'}
+                    </button>
+                  )}
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs text-slate-400 mb-1">Caminho remoto</label>
+                  <input type="text" placeholder="/nexus-backups/"
+                    value={dbExport.db_export_remote_path || '/'}
+                    onChange={e => dbExportPatch({ db_export_remote_path: e.target.value })}
+                    disabled={!dbExport.db_export_remote_enabled}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm font-mono" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Dia da semana</label>
+                  <select value={dbExport.db_export_remote_dia_semana}
+                    onChange={e => dbExportPatch({ db_export_remote_dia_semana: Number(e.target.value) })}
+                    disabled={!dbExport.db_export_remote_enabled}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm">
+                    <option value={0}>Segunda</option>
+                    <option value={1}>Terça</option>
+                    <option value={2}>Quarta</option>
+                    <option value={3}>Quinta</option>
+                    <option value={4}>Sexta</option>
+                    <option value={5}>Sábado</option>
+                    <option value={6}>Domingo</option>
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="block text-xs text-slate-400 mb-1">Hora</label>
+                    <select value={dbExport.db_export_remote_hora}
+                      onChange={e => dbExportPatch({ db_export_remote_hora: Number(e.target.value) })}
+                      disabled={!dbExport.db_export_remote_enabled}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-2 py-2 text-sm">
+                      {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{pad(i)}h</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs text-slate-400 mb-1">Min</label>
+                    <select value={dbExport.db_export_remote_minute}
+                      onChange={e => dbExportPatch({ db_export_remote_minute: Number(e.target.value) })}
+                      disabled={!dbExport.db_export_remote_enabled}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-2 py-2 text-sm">
+                      {[0, 15, 30, 45].map(m => <option key={m} value={m}>{pad(m)}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Arquivos locais existentes */}
+            {dbExport.arquivos_locais && dbExport.arquivos_locais.length > 0 && (
+              <div className="border-t border-slate-700 pt-4">
+                <p className="text-xs text-slate-400 mb-2">Arquivos locais ({dbExport.arquivos_locais.length}/7):</p>
+                <div className="space-y-1 text-xs font-mono">
+                  {dbExport.arquivos_locais.slice(0, 7).map(f => (
+                    <div key={f.nome} className="flex items-center justify-between text-slate-400 bg-slate-900/50 px-3 py-1.5 rounded">
+                      <span>{f.nome}</span>
+                      <span className="text-slate-500">{(f.tamanho_bytes / 1024).toFixed(1)} KB</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {dbExportMessage && (
+              <p className={`text-sm ${dbExportMessage.type === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {dbExportMessage.text}
+              </p>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-slate-700">
+              <button type="button" onClick={salvarDbExport} disabled={dbExportSaving}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-sky-500 hover:bg-sky-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                <Save size={14} /> {dbExportSaving ? 'Salvando...' : 'Salvar config'}
+              </button>
+              <button type="button" onClick={executarExportAgora}
+                disabled={executandoExport || !dbExport.chave_configurada}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                <Download size={14} /> {executandoExport ? 'Exportando...' : 'Exportar agora'}
+              </button>
+              <button type="button" onClick={executarUploadAgora}
+                disabled={executandoUpload || !dbExport.db_export_remote_enabled}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                <Cloud size={14} /> {executandoUpload ? 'Enviando...' : 'Enviar agora'}
               </button>
             </div>
           </div>

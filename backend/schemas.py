@@ -263,6 +263,50 @@ class TelegramTestRequest(BaseModel):
     o de uma empresa específica antes de salvar."""
     chat_id: Optional[str] = None  # se None, usa o default global
 
+
+# ===== Export do banco (.nxbak — v2.0.0) =====
+
+class DbExportConfigOut(BaseModel):
+    """Estado da config do export do banco. db_export_key_configurada é
+    derivado (settings.DB_EXPORT_KEY existe e válida) — admin vê se a
+    chave do .env está populada sem expor o valor."""
+    db_export_enabled: bool = True
+    db_export_hour: int = 3
+    db_export_minute: int = 30
+    db_export_remote_enabled: bool = False
+    db_export_remote_protocolo: str = "sftp"
+    db_export_remote_host: Optional[str] = None
+    db_export_remote_porta: int = 22
+    db_export_remote_user: Optional[str] = None
+    db_export_remote_senha_configurada: bool = False  # True se há senha salva (sem expor)
+    db_export_remote_path: str = "/"
+    db_export_remote_dia_semana: int = 0
+    db_export_remote_hora: int = 4
+    db_export_remote_minute: int = 0
+    # Sinaliza pro frontend se a chave Fernet está configurada — sem ela
+    # o export não acontece, e o admin deve preencher DB_EXPORT_KEY no .env.
+    chave_configurada: bool = False
+    # Lista dos arquivos .nxbak presentes localmente (nome + tamanho + data).
+    arquivos_locais: list[dict] = []
+
+
+class DbExportConfigUpdate(BaseModel):
+    """Update parcial da config — só envia os campos que mudaram."""
+    db_export_enabled: Optional[bool] = None
+    db_export_hour: Optional[int] = None
+    db_export_minute: Optional[int] = None
+    db_export_remote_enabled: Optional[bool] = None
+    db_export_remote_protocolo: Optional[str] = None  # 'sftp' | 'ftp'
+    db_export_remote_host: Optional[str] = None
+    db_export_remote_porta: Optional[int] = None
+    db_export_remote_user: Optional[str] = None
+    # Senha em texto puro. None = não tocar; '' (vazio) = limpar; valor = setar.
+    db_export_remote_senha: Optional[str] = None
+    db_export_remote_path: Optional[str] = None
+    db_export_remote_dia_semana: Optional[int] = None
+    db_export_remote_hora: Optional[int] = None
+    db_export_remote_minute: Optional[int] = None
+
 # Atividade (auditoria)
 class AtividadeOut(BaseModel):
     id: int
