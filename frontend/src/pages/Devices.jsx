@@ -520,6 +520,22 @@ const formatHostPort = (ip, porta) => {
 }
 const formatDeviceId = (id) => String(id).padStart(5, '0')
 
+// Chave de ordenação pra IP. Devolve {isV6, key}:
+// - IPv4 vira inteiro 32-bit (pra que "192.168.1.2" venha antes de "192.168.1.10")
+// - IPv6 (qualquer string com ":") fica no grupo "v6"; comparação por string lowercase
+// - String inválida ou vazia também cai no grupo "v6" (vai pro fim)
+// O sorter usa isV6 pra empurrar v6 sempre pro fim, independente da direção.
+function ipSortKey(ip) {
+  if (!ip || typeof ip !== 'string') return { isV6: true, key: '' }
+  if (ip.includes(':')) return { isV6: true, key: ip.toLowerCase() }
+  const partes = ip.split('.').map(n => parseInt(n, 10))
+  if (partes.length !== 4 || partes.some(p => isNaN(p) || p < 0 || p > 255)) {
+    return { isV6: true, key: ip.toLowerCase() }  // string esquisita vai pro fim junto com v6
+  }
+  // Multiplicação em vez de bitshift — JS bitshift retorna int32 signed e pode virar negativo
+  return { isV6: false, key: partes[0] * 16777216 + partes[1] * 65536 + partes[2] * 256 + partes[3] }
+}
+
 // Cabeçalho de tabela clicável que dispara troca de ordenação.
 // Mostra ChevronsUpDown (cinza, sutil) quando coluna não-ativa, e
 // ArrowUp/ArrowDown (sky) quando é a coluna ordenada — sinaliza ao usuário
@@ -614,6 +630,15 @@ export default function Devices() {
     const sorters = {
       id: (a, b) => (a.id - b.id) * mult,
       nome: (a, b) => cmpTexto(a.nome || '', b.nome || ''),
+      ip: (a, b) => {
+        const ka = ipSortKey(a.ip)
+        const kb = ipSortKey(b.ip)
+        // IPv6 (e strings inválidas) SEMPRE depois de IPv4, independente da direção —
+        // mesma regra que "Último backup" pra null. Direção só ordena dentro de cada grupo.
+        if (ka.isV6 !== kb.isV6) return ka.isV6 ? 1 : -1
+        if (ka.isV6) return ka.key.localeCompare(kb.key) * mult
+        return (ka.key - kb.key) * mult
+      },
       tipo: (a, b) => cmpTexto(TIPO_LABEL[a.tipo] || 'Roteador', TIPO_LABEL[b.tipo] || 'Roteador'),
       fabricante: (a, b) => cmpTexto(labelFabricante(a.fabricante), labelFabricante(b.fabricante)),
       protocolo: (a, b) => cmpTexto(PROTOCOL_LABEL[a.protocolo] || 'SSH', PROTOCOL_LABEL[b.protocolo] || 'SSH'),
@@ -651,7 +676,7 @@ export default function Devices() {
   // Pra ID e "Último backup" o esperado é o mais novo no topo (desc);
   // pras colunas de texto o alfabético natural (asc).
   const DIRECAO_INICIAL = {
-    id: 'desc', nome: 'asc', tipo: 'asc', fabricante: 'asc',
+    id: 'desc', nome: 'asc', ip: 'asc', tipo: 'asc', fabricante: 'asc',
     protocolo: 'asc', ativo: 'asc', ultimo_backup: 'desc',
   }
   function toggleOrdenacao(coluna) {
@@ -941,8 +966,7 @@ export default function Devices() {
             <tr className="border-b border-slate-700 text-slate-400 text-left select-none">
               <ThOrdenavel coluna="id" label="ID" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
               <ThOrdenavel coluna="nome" label="Nome" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
-              {/* IP fica estático — não há ordenação por IP no memo */}
-              <th className="px-5 py-3 font-medium">IP</th>
+              <ThOrdenavel coluna="ip" label="IP" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
               <ThOrdenavel coluna="tipo" label="Tipo" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
               <ThOrdenavel coluna="fabricante" label="Fabricante" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
               <ThOrdenavel coluna="protocolo" label="Protocolo" ordenarPor={ordenarPor} direcao={direcao} onClick={toggleOrdenacao} />
