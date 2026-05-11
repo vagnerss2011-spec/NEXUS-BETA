@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.3.2] - 2026-05-10
+
+### Corrigido
+
+- **Logo na tela de Login agora aparece maior e mais centralizado verticalmente.** Em v1.3.1 ficava pequeno (`w-28` / 112px) e colado no topo — feedback do usuário pedindo proporção próxima dos 30% da viewport. Aumentado pra `w-48 sm:w-56` (192px mobile / 224px desktop) e adicionado `mt-16` no bloco do logo pra empurrar pra mais baixo (perto da posição do `Shield` original do v1.3.0).
+
 ## [1.3.1] - 2026-05-10
 
 ### Adicionado
