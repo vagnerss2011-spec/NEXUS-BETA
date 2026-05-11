@@ -360,6 +360,18 @@ class NexusSFTPServerInterface(paramiko.SFTPServerInterface):
             # Preserva o nome original que o cliente enviou — chave pra UNM2000
             # diferenciar arquivos de OLTs distintas que chegam com mesma cred.
             conteudo = ler_arquivo_pra_persistir(real_path, nome_arquivo)
+
+            # Plano C de coleta via API Mikrotik: se há run_backup_via_api
+            # esperando upload desse device, entrega conteúdo direto na fila
+            # e PULA o processar_upload (que aplicaria dedupe diário e
+            # apagaria backups históricos). O caller cria backup normal
+            # com origem='manual'.
+            from services.mikrotik_api import has_pending_api_upload, deliver_api_upload
+            if has_pending_api_upload(dev.id) and deliver_api_upload(dev.id, conteudo):
+                log.info("SFTP %s: upload entregue ao Plano C da coleta API (device %s)",
+                         self.ssh_server.client_ip, dev.id)
+                return
+
             processar_upload(dev, conteudo, self.ssh_server.client_ip, tamanho, db,
                              nome_arquivo=nome_arquivo, protocolo="SFTP")
             db.commit()

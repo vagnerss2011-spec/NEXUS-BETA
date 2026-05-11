@@ -23,7 +23,9 @@ Caminho de coleta (3 planos em cascata):
    auto-gerada no device. Funciona pra arquivos de qualquer tamanho.
 """
 import os
+import queue
 import ssl
+import threading
 import time
 import logging
 from typing import Tuple
@@ -33,6 +35,38 @@ from models import Device, DeviceVendor, Protocolo, Backup
 from services.crypto import decrypt
 from config import settings
 from services.push_backup import SyncSessionLocal
+
+# Fila em memória pra entrega cross-thread do conteúdo recebido via SFTP push.
+# Quando o Plano C dispara /tool/fetch, registra device_id aqui antes; quando
+# o SFTP server processa um upload, checa se device_id está no dict — se sim,
+# entrega conteúdo na Queue e PULA o processar_upload normal (evita criar
+# backup push duplicado e o dedupe diário que apagaria backups históricos do
+# mesmo dia). Thread-safe: dict + Queue protegido por lock.
+_pending_lock = threading.Lock()
+_pending_api_uploads: dict[int, queue.Queue] = {}
+
+
+def has_pending_api_upload(device_id: int) -> bool:
+    """SFTP server (em thread separada) chama isso pra saber se deve pular
+    o `processar_upload` normal (que cria backup push + dedupe diário).
+    """
+    with _pending_lock:
+        return device_id in _pending_api_uploads
+
+
+def deliver_api_upload(device_id: int, conteudo: str) -> bool:
+    """SFTP server chama isso quando o upload é do Plano C — entrega o
+    conteúdo na Queue. Retorna True se entregue, False se ninguém estava
+    esperando (caller deve seguir fluxo de push normal)."""
+    with _pending_lock:
+        q = _pending_api_uploads.get(device_id)
+    if q is not None:
+        try:
+            q.put_nowait(conteudo)
+            return True
+        except queue.Full:
+            log.warning("Queue de Plano C cheia pro device %s — descartando", device_id)
+    return False
 
 log = logging.getLogger(__name__)
 
@@ -102,7 +136,7 @@ def _export_via_command(api) -> str | None:
             chaves = sorted({k for r in replies[:20] for k in r.keys()})
             log.warning(
                 "Plano A /export: %d replies mas nenhuma chave conhecida (ret/line/message). "
-                "Chaves observadas: %s. Caindo pro Plano B.",
+                "Chaves observadas: %s. Caindo pro Plano C (upload SFTP).",
                 len(replies), chaves
             )
             return None
@@ -127,17 +161,12 @@ def _export_via_upload_sftp(api, device: Device) -> str:
     upload=yes mode=sftp pra empurrar o arquivo pro nosso SFTP server.
 
     Usa cred SFTP auto-gerada do device (Device.ftp_user + ftp_senha_enc).
-    Pipeline normal de push processa o arquivo e cria backup no banco;
-    pollamos a tabela `backups` esperando esse backup novo aparecer, lemos
-    o conteúdo, deletamos esse backup (pra evitar duplicação) e retornamos
-    o conteúdo pro caller criar backup com origem='manual' como nos outros
-    fluxos.
-
-    Por que esse "deleta-e-retorna" em vez de retornar status-só:
-    - Caller (routers/backups.py) sempre cria um Backup com o tupple
-      (status, conteudo). Se retornássemos "sucesso, async", precisaria
-      ajustar toda a chain. Tem o pequeno custo de uma row a mais por
-      poucos ms no banco, mas é transparente pro resto do código.
+    Pra evitar duplicação com a pipeline normal de push (que aplica dedupe
+    diário e apagaria os backups históricos do dia), o SFTP server consulta
+    `_pending_api_uploads` ao receber um arquivo. Se device_id está
+    registrado, entrega conteúdo direto na Queue desta função e PULA o
+    `processar_upload`. Retorna conteúdo pro caller (run_backup) criar
+    backup com origem='manual' como nos outros fluxos.
     """
     if not device.ftp_user or not device.ftp_senha_enc:
         raise RuntimeError(
@@ -155,91 +184,68 @@ def _export_via_upload_sftp(api, device: Device) -> str:
     nome_rsc = f"{nome_base}.rsc"
     nome_destino = f"backup-api-{device.id}-{int(time.time())}.rsc"
 
-    # 1) Gera o /export no /file do Mikrotik. Args iguais ao Plano B.
-    export_args: dict = {"file": nome_base}
-    if device.fabricante == DeviceVendor.mikrotik_v7:
-        export_args["show-sensitive"] = "yes"
+    # 1) Registra fila pra esse device antes de disparar nada — garante que
+    # qualquer upload que chegue pra esse user/device seja capturado.
+    fila: queue.Queue = queue.Queue(maxsize=1)
+    with _pending_lock:
+        _pending_api_uploads[device.id] = fila
+
     try:
-        list(api("/export", **export_args))
-    except Exception as e:
-        if "show-sensitive" in export_args:
-            log.warning("export com show-sensitive falhou (%s), retentando sem", e)
-            export_args.pop("show-sensitive", None)
+        # 2) Gera o /export no /file do Mikrotik.
+        export_args: dict = {"file": nome_base}
+        if device.fabricante == DeviceVendor.mikrotik_v7:
+            export_args["show-sensitive"] = "yes"
+        try:
             list(api("/export", **export_args))
-        else:
-            raise
+        except Exception as e:
+            if "show-sensitive" in export_args:
+                log.warning("export com show-sensitive falhou (%s), retentando sem", e)
+                export_args.pop("show-sensitive", None)
+                list(api("/export", **export_args))
+            else:
+                raise
 
-    # 2) Snapshot do último backup ID antes do upload — pra detectar qual
-    # backup é o "novo" criado pela pipeline SFTP (push).
-    with SyncSessionLocal() as db:
-        ultimo_antes = db.execute(
-            select(Backup.id).where(Backup.device_id == device.id)
-            .order_by(Backup.id.desc()).limit(1)
-        ).scalar_one_or_none() or 0
+        # 3) Dispara /tool/fetch upload=yes mode=sftp pro nosso server.
+        fetch_args = {
+            "upload": "yes",
+            "mode": "sftp",
+            "address": settings.FTP_MASQUERADE_ADDRESS,
+            "port": "22",
+            "user": device.ftp_user,
+            "password": senha_sftp,
+            "src-path": nome_rsc,
+            "dst-path": nome_destino,
+        }
+        try:
+            list(api("/tool/fetch", **fetch_args))
+        except Exception as e:
+            _try_remove_file(api, nome_rsc)
+            raise RuntimeError(f"Falha no /tool/fetch upload pro SFTP do NEXUS: {e}")
 
-    # 3) Dispara /tool/fetch upload=yes mode=sftp pro nosso server.
-    fetch_args = {
-        "upload": "yes",
-        "mode": "sftp",
-        "address": settings.FTP_MASQUERADE_ADDRESS,
-        "port": "22",
-        "user": device.ftp_user,
-        "password": senha_sftp,
-        "src-path": nome_rsc,
-        "dst-path": nome_destino,
-    }
-    try:
-        list(api("/tool/fetch", **fetch_args))
-    except Exception as e:
-        # Cleanup do arquivo temp no Mikrotik antes de levantar.
+        # 4) Aguarda a Queue ser populada pelo SFTP server (cross-thread).
+        # Timeout generoso pra cobrir rede lenta / arquivo grande.
+        try:
+            conteudo = fila.get(timeout=60.0)
+        except queue.Empty:
+            _try_remove_file(api, nome_rsc)
+            raise RuntimeError(
+                f"/tool/fetch disparado mas arquivo não chegou em 60s. Possíveis "
+                f"causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:22, "
+                "firewall do NEXUS bloqueando, ou cred SFTP incorreta. Verifique "
+                "logs do SFTP server."
+            )
+
+        # 5) Cleanup do arquivo temp no Mikrotik.
         _try_remove_file(api, nome_rsc)
-        raise RuntimeError(f"Falha no /tool/fetch upload pro SFTP do NEXUS: {e}")
 
-    # 4) Polla a tabela backups por backup novo (criado pela pipeline SFTP)
-    # com timeout generoso. Pipeline normal é rápida (segundos), mas dev em
-    # rede lenta / arquivo grande pode demorar mais.
-    deadline = time.time() + 60.0
-    backup_novo_id = None
-    backup_conteudo = None
-    while time.time() < deadline:
-        with SyncSessionLocal() as db:
-            row = db.execute(
-                select(Backup.id, Backup.conteudo, Backup.status)
-                .where(Backup.device_id == device.id, Backup.id > ultimo_antes)
-                .order_by(Backup.id.desc()).limit(1)
-            ).first()
-            if row:
-                backup_novo_id = row[0]
-                backup_conteudo = row[1] if row[2] == "sucesso" else None
-                break
-        time.sleep(0.5)
-
-    # 5) Cleanup do arquivo temp no Mikrotik (a essa altura ele já foi
-    # uploadado; remoção é responsabilidade nossa pra não deixar lixo).
-    _try_remove_file(api, nome_rsc)
-
-    if backup_novo_id is None:
-        raise RuntimeError(
-            f"/tool/fetch disparado mas backup não chegou em 60s. Possíveis "
-            f"causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:22, "
-            "firewall do NEXUS bloqueando, ou cred SFTP incorreta. Verifique "
-            "logs do SFTP server."
-        )
-    if not backup_conteudo:
-        # Apaga o row de falha antes de levantar pra não duplicar com a falha
-        # que vai vir pelo caller.
-        with SyncSessionLocal() as db:
-            db.execute(Backup.__table__.delete().where(Backup.id == backup_novo_id))
-            db.commit()
-        raise RuntimeError("Backup chegou via SFTP mas marcado como falha pela pipeline (arquivo vazio/corrompido).")
-
-    # 6) Apaga o backup que a pipeline criou pra evitar duplicação — o caller
-    # vai criar novo Backup com origem='manual' usando o conteúdo retornado.
-    with SyncSessionLocal() as db:
-        db.execute(Backup.__table__.delete().where(Backup.id == backup_novo_id))
-        db.commit()
-
-    return backup_conteudo
+        if not conteudo or not conteudo.strip():
+            raise RuntimeError("Arquivo chegou via SFTP mas com conteúdo vazio.")
+        return conteudo
+    finally:
+        # Sempre desregistra — protege caso outra coleta posterior pro mesmo
+        # device chegue (sem nada esperando, pipeline normal processa).
+        with _pending_lock:
+            _pending_api_uploads.pop(device.id, None)
 
 
 def _try_remove_file(api, nome: str) -> None:

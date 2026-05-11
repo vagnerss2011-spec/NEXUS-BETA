@@ -12,6 +12,12 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.5] - 2026-05-11
+
+### Corrigido
+
+- **Plano C de coleta API (v1.4.4) tinha bug crítico de perda de dados**: o caminho antigo deixava a pipeline `processar_upload` criar o backup push normalmente e depois deletava o row. Mas o `processar_upload` faz **dedupe diário** que **apaga TODOS os backups do mesmo dia** antes de inserir o novo — então o "deletar depois" perdia todos os históricos do dia também. Refatorado: usa fila em memória (`_pending_api_uploads`) — quando `run_backup_via_api` dispara `/tool/fetch`, registra device_id na fila ANTES; `processar_upload_local` no SFTP server checa essa fila ao receber upload e, se o device tem entry, entrega conteúdo direto na fila e **pula** `processar_upload` (não cria backup push, não aciona dedupe). Pipeline normal de push continua funcionando inalterada pra `sftp_push` "puro".
+
 ## [1.4.4] - 2026-05-11
 
 ### Adicionado
