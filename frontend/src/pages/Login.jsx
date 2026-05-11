@@ -66,8 +66,8 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-900">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <img src="/nexus-logo.png" alt="NEXUS BACKUP" className="w-28 h-28 mx-auto mb-4" />
+        <div className="text-center mb-8 mt-16">
+          <img src="/nexus-logo.png" alt="NEXUS BACKUP" className="w-48 h-48 sm:w-56 sm:h-56 mx-auto mb-6" />
           <h1 className="text-2xl font-bold text-white">NEXUS BACKUP</h1>
           <p className="text-slate-400 text-sm mt-1">Backup Manager — Acesso restrito</p>
         </div>
