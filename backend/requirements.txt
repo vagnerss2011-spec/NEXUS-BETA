@@ -31,3 +31,6 @@ httpx==0.27.0
 # RouterOS API binária (Mikrotik v6+v7) — protocolo 'api' nos devices.
 # Porta 8728 (plain) ou 8729 (TLS). Adicionado em v1.4.0.
 librouteros==3.4.0
+# Telemetria do host (CPU/RAM) usada pelo scheduler diário pra auto-ajustar
+# o número de workers paralelos. Lê de /proc — custo desprezível.
+psutil==5.9.8

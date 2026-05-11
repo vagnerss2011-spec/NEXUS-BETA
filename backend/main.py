@@ -245,6 +245,43 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS alertas_tamanho INTEGER
         """))
 
+        # Paralelismo adaptativo (Zabbix-like) — caps + limites + auto on/off.
+        # Defaults: API até 4, SSH até 2, CPU/RAM limite 80%, auto ON.
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_workers_max_api INTEGER NOT NULL DEFAULT 4
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_workers_max_ssh INTEGER NOT NULL DEFAULT 2
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_cpu_limite_pct INTEGER NOT NULL DEFAULT 80
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_mem_limite_pct INTEGER NOT NULL DEFAULT 80
+        """))
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS backup_workers_auto BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+
+        # Métricas de paralelismo gravadas a cada run do scheduler
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS workers_max_atingido_api INTEGER
+        """))
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS workers_max_atingido_ssh INTEGER
+        """))
+        await conn.execute(text("""
+            ALTER TABLE log_scheduler
+            ADD COLUMN IF NOT EXISTS tempo_sob_stress_seg INTEGER
+        """))
+
         # 8.0.2) empresas.telegram_chat_id (override do default global por empresa)
         await conn.execute(text("""
             ALTER TABLE empresas

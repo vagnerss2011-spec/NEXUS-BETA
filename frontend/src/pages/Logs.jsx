@@ -327,6 +327,19 @@ function SchedulerRow({ log, onOpen, canDelete, onDelete, mostrarEmpresa }) {
         {log.duracao_media_segundos != null && (
           <span className="text-slate-500"> · média {Math.round(log.duracao_media_segundos)}s/device</span>
         )}
+        {/* Métricas v2.x (paralelismo). NULL = log antigo, não exibe. */}
+        {(log.workers_max_atingido_api > 0 || log.workers_max_atingido_ssh > 0) && (
+          <span className="text-slate-500"
+            title="Pico de workers paralelos alcançados durante a janela (API + SSH/Telnet)">
+            {' · '}🧵 API:{log.workers_max_atingido_api ?? 0}/SSH:{log.workers_max_atingido_ssh ?? 0}
+          </span>
+        )}
+        {log.tempo_sob_stress_seg > 0 && (
+          <span className="text-amber-400 ml-1"
+            title="Segundos da janela em que CPU/RAM ficaram acima do limite configurado">
+            · 🌡️ {log.tempo_sob_stress_seg}s sob stress
+          </span>
+        )}
       </td>
       {mostrarEmpresa && (
         <td className="px-4 py-3">

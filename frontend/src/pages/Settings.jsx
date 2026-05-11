@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Clock, Save, ScrollText, Bell, Send, AlertTriangle, Gauge } from 'lucide-react'
+import { Clock, Save, ScrollText, Bell, Send, AlertTriangle, Gauge, Cpu } from 'lucide-react'
 import api from '../services/api'
 
 // Converte dias <-> exibição em dias/meses (mês = 30 dias)
@@ -25,6 +25,12 @@ export default function Settings() {
   const [delayMin, setDelayMin] = useState(10)
   const [delayFator, setDelayFator] = useState(0.2)
   const [picoFator, setPicoFator] = useState(3.0)
+  // Paralelismo adaptativo (Zabbix-like)
+  const [workersMaxApi, setWorkersMaxApi] = useState(4)
+  const [workersMaxSsh, setWorkersMaxSsh] = useState(2)
+  const [cpuLimite, setCpuLimite] = useState(80)
+  const [memLimite, setMemLimite] = useState(80)
+  const [workersAuto, setWorkersAuto] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
@@ -51,6 +57,11 @@ export default function Settings() {
         setDelayMin(r.data.backup_delay_min_seg ?? 10)
         setDelayFator(r.data.backup_delay_fator ?? 0.2)
         setPicoFator(r.data.backup_pico_fator_critico ?? 3.0)
+        setWorkersMaxApi(r.data.backup_workers_max_api ?? 4)
+        setWorkersMaxSsh(r.data.backup_workers_max_ssh ?? 2)
+        setCpuLimite(r.data.backup_cpu_limite_pct ?? 80)
+        setMemLimite(r.data.backup_mem_limite_pct ?? 80)
+        setWorkersAuto(r.data.backup_workers_auto ?? true)
       })
       .finally(() => setLoading(false))
 
@@ -79,6 +90,11 @@ export default function Settings() {
         backup_delay_min_seg: Number(delayMin),
         backup_delay_fator: Number(delayFator),
         backup_pico_fator_critico: Number(picoFator),
+        backup_workers_max_api: Number(workersMaxApi),
+        backup_workers_max_ssh: Number(workersMaxSsh),
+        backup_cpu_limite_pct: Number(cpuLimite),
+        backup_mem_limite_pct: Number(memLimite),
+        backup_workers_auto: !!workersAuto,
       })
       setMessage({ type: 'success', text: 'Configurações atualizadas com sucesso!' })
     } catch {
@@ -228,6 +244,78 @@ export default function Settings() {
                   <span className="text-sky-400 font-medium">{delayFator}</span>, devices que levam ~30s ficam com pausa de{' '}
                   <span className="text-sky-300 font-medium">{Math.max(Number(delayMin) || 0, Math.round((Number(delayFator) || 0) * 30))}s</span>{' '}
                   entre coletas. Picos &gt; <span className="text-amber-400 font-medium">{picoFator}×</span> a média do device viram alerta Telegram.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-slate-800 border border-slate-700 rounded-xl">
+          <div className="p-4 sm:p-5 border-b border-slate-700 flex items-center gap-2">
+            <Cpu size={18} className="text-slate-400" />
+            <h2 className="font-semibold text-white">Paralelismo Adaptativo</h2>
+          </div>
+          <div className="p-4 sm:p-5 space-y-4">
+            {loading ? (
+              <p className="text-slate-400 text-sm">Carregando...</p>
+            ) : (
+              <>
+                <p className="text-xs text-slate-500">
+                  Workers paralelos auto-ajustáveis (estilo "Zabbix-agent") — sobem gradualmente e cortam pela metade se a infra
+                  ficar sob stress. Pool API é separado de SSH/Telnet (paramiko consome mais recurso).
+                </p>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!workersAuto}
+                    onChange={e => setWorkersAuto(e.target.checked)}
+                    className="accent-sky-500"
+                  />
+                  <span className="text-slate-300">Auto-ajuste ligado</span>
+                  <span className="text-xs text-slate-500">— desligado trava em 1 worker (modo legado sequencial)</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Workers máx — API</label>
+                    <input type="number" min="1" max="8" value={workersMaxApi}
+                      onChange={e => setWorkersMaxApi(e.target.value)}
+                      disabled={!workersAuto}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50" />
+                    <p className="text-[11px] text-slate-500 mt-1">RouterOS API binária — leve. Sugestão: 4</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Workers máx — SSH/Telnet</label>
+                    <input type="number" min="1" max="8" value={workersMaxSsh}
+                      onChange={e => setWorkersMaxSsh(e.target.value)}
+                      disabled={!workersAuto}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50" />
+                    <p className="text-[11px] text-slate-500 mt-1">Paramiko/Netmiko consome mais. Sugestão: 2</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Limite CPU (%)</label>
+                    <input type="number" min="30" max="95" value={cpuLimite}
+                      onChange={e => setCpuLimite(e.target.value)}
+                      disabled={!workersAuto}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50" />
+                    <p className="text-[11px] text-slate-500 mt-1">Média 60s — acima disso, corta workers pela metade.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Limite RAM (%)</label>
+                    <input type="number" min="30" max="95" value={memLimite}
+                      onChange={e => setMemLimite(e.target.value)}
+                      disabled={!workersAuto}
+                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50" />
+                    <p className="text-[11px] text-slate-500 mt-1">Mesma regra do CPU — proteção contra OOM.</p>
+                  </div>
+                </div>
+                <p className="text-slate-500 text-xs">
+                  {workersAuto
+                    ? <>Cap configurado: <span className="text-sky-400 font-medium">{workersMaxApi}</span> em API e{' '}
+                       <span className="text-sky-400 font-medium">{workersMaxSsh}</span> em SSH/Telnet em paralelo.{' '}
+                       Stress detectado em CPU &gt; <span className="text-amber-400 font-medium">{cpuLimite}%</span> ou RAM &gt;{' '}
+                       <span className="text-amber-400 font-medium">{memLimite}%</span>.</>
+                    : <span className="text-amber-400">Auto-ajuste desligado — sempre 1 worker (sequencial igual ao modo antigo).</span>
+                  }
                 </p>
               </>
             )}

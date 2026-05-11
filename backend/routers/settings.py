@@ -51,6 +51,16 @@ async def update_schedule(
         raise HTTPException(status_code=422, detail="Fator de delay deve ser entre 0 e 10")
     if body.backup_pico_fator_critico is not None and not (1.0 <= body.backup_pico_fator_critico <= 100.0):
         raise HTTPException(status_code=422, detail="Fator de pico crítico deve ser ≥ 1 (1 = qualquer aumento conta)")
+    # Paralelismo: cap hard absoluto = 8 (mesmo se admin tentar pôr 50, fica 8 no banco).
+    # CPU/RAM limites entre 30 e 95% (abaixo é exagero, acima não dá segurança).
+    if body.backup_workers_max_api is not None and not (1 <= body.backup_workers_max_api <= 8):
+        raise HTTPException(status_code=422, detail="Workers max API deve estar entre 1 e 8")
+    if body.backup_workers_max_ssh is not None and not (1 <= body.backup_workers_max_ssh <= 8):
+        raise HTTPException(status_code=422, detail="Workers max SSH deve estar entre 1 e 8")
+    if body.backup_cpu_limite_pct is not None and not (30 <= body.backup_cpu_limite_pct <= 95):
+        raise HTTPException(status_code=422, detail="Limite de CPU deve estar entre 30 e 95%")
+    if body.backup_mem_limite_pct is not None and not (30 <= body.backup_mem_limite_pct <= 95):
+        raise HTTPException(status_code=422, detail="Limite de memória deve estar entre 30 e 95%")
 
     config = await _get_or_create_config(db)
     config.backup_hour = body.backup_hour
@@ -63,6 +73,16 @@ async def update_schedule(
         config.backup_delay_fator = body.backup_delay_fator
     if body.backup_pico_fator_critico is not None:
         config.backup_pico_fator_critico = body.backup_pico_fator_critico
+    if body.backup_workers_max_api is not None:
+        config.backup_workers_max_api = body.backup_workers_max_api
+    if body.backup_workers_max_ssh is not None:
+        config.backup_workers_max_ssh = body.backup_workers_max_ssh
+    if body.backup_cpu_limite_pct is not None:
+        config.backup_cpu_limite_pct = body.backup_cpu_limite_pct
+    if body.backup_mem_limite_pct is not None:
+        config.backup_mem_limite_pct = body.backup_mem_limite_pct
+    if body.backup_workers_auto is not None:
+        config.backup_workers_auto = body.backup_workers_auto
     await db.commit()
     await db.refresh(config)
 

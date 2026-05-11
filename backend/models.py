@@ -195,6 +195,24 @@ class Configuracao(Base):
     # registra WARNING crítico e dispara alerta Telegram (categoria volume_alto).
     # Default 3.0 — backup que normalmente leva 60s mas levou 180s vira alerta.
     backup_pico_fator_critico = Column(Float, nullable=False, default=3.0)
+    # ===== Paralelismo adaptativo (Zabbix-like auto-tuning) =====
+    # Cap MÁXIMO de workers paralelos. Hard limit no código é 8 — valores
+    # acima são truncados pra evitar disaster (estouro de threads paramiko).
+    # Pool API é mais agressivo (default 4) porque API binária é leve;
+    # pool SSH/Telnet é conservador (default 2) porque Paramiko/Netmiko
+    # consomem mais socket+thread por sessão.
+    backup_workers_max_api = Column(Integer, nullable=False, default=4)
+    backup_workers_max_ssh = Column(Integer, nullable=False, default=2)
+    # Limites de stress: acima desses %, o scheduler corta workers pela metade.
+    # CPU média 60s e memória média 60s. Defaults 80% — folga pro overhead
+    # do Docker/uvicorn sem strangular.
+    backup_cpu_limite_pct = Column(Integer, nullable=False, default=80)
+    backup_mem_limite_pct = Column(Integer, nullable=False, default=80)
+    # Liga/desliga o auto-tuning AIMD (Additive Increase Multiplicative Decrease).
+    # ON: workers começam em 1 e sobem gradativamente conforme histórico de
+    # sucesso + telemetria; descem pela metade ao detectar stress.
+    # OFF: trava em 1 worker (comportamento legado pré-v2.x, sequencial).
+    backup_workers_auto = Column(Boolean, nullable=False, default=True)
     # ===== Telegram (alertas de falha/corrupção) =====
     # Token do bot (Fernet-encrypted). NULL = notificações Telegram desabilitadas.
     # 1 bot único pra toda a instalação; cada empresa pode ter seu chat_id próprio.
@@ -239,4 +257,11 @@ class LogScheduler(Base):
     duracao_media_segundos = Column(Float, nullable=True)
     picos_detectados = Column(Integer, nullable=True)
     alertas_tamanho = Column(Integer, nullable=True)
+    # Métricas de paralelismo adaptativo (v2.x do scheduler):
+    # - workers_max_atingido_api/ssh: pico de concorrência alcançado em cada pool
+    # - tempo_sob_stress_seg: segundos da janela em que CPU/RAM ficaram >limite
+    # NULL = log pré-feature ou rodado com backup_workers_auto=False.
+    workers_max_atingido_api = Column(Integer, nullable=True)
+    workers_max_atingido_ssh = Column(Integer, nullable=True)
+    tempo_sob_stress_seg = Column(Integer, nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())

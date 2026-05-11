@@ -212,6 +212,12 @@ class ScheduleOut(BaseModel):
     backup_delay_min_seg: int = 10
     backup_delay_fator: float = 0.2
     backup_pico_fator_critico: float = 3.0
+    # Paralelismo adaptativo (Zabbix-like)
+    backup_workers_max_api: int = 4
+    backup_workers_max_ssh: int = 2
+    backup_cpu_limite_pct: int = 80
+    backup_mem_limite_pct: int = 80
+    backup_workers_auto: bool = True
     class Config:
         from_attributes = True
 
@@ -222,6 +228,11 @@ class ScheduleUpdate(BaseModel):
     backup_delay_min_seg: Optional[int] = None
     backup_delay_fator: Optional[float] = None
     backup_pico_fator_critico: Optional[float] = None
+    backup_workers_max_api: Optional[int] = None
+    backup_workers_max_ssh: Optional[int] = None
+    backup_cpu_limite_pct: Optional[int] = None
+    backup_mem_limite_pct: Optional[int] = None
+    backup_workers_auto: Optional[bool] = None
 
 # Telegram (alertas de falha/corrupção)
 class TelegramConfigOut(BaseModel):

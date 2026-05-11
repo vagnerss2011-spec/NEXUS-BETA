@@ -32,6 +32,10 @@ class LogSchedulerOut(BaseModel):
     duracao_media_segundos: Optional[float] = None
     picos_detectados: Optional[int] = None
     alertas_tamanho: Optional[int] = None
+    # Métricas v2.x (paralelismo adaptativo)
+    workers_max_atingido_api: Optional[int] = None
+    workers_max_atingido_ssh: Optional[int] = None
+    tempo_sob_stress_seg: Optional[int] = None
     criado_em: datetime
     empresas: list[EmpresaResumoLog] = []
 

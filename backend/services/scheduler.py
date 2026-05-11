@@ -10,6 +10,7 @@ from database import AsyncSessionLocal
 from models import Device, Backup, Configuracao, LogScheduler, Protocolo
 from services.ssh_service import run_backup
 from services.telegram import enviar_alerta_async
+from services.system_health import HealthMonitor
 from config import settings
 
 log = logging.getLogger(__name__)
@@ -37,6 +38,17 @@ MIN_HISTORICO_PARA_PICO = 3
 # Backups.jsx (ALERTA_RATIO=0.5). Mantido sincronizado.
 ALERTA_RATIO_TAMANHO = 0.5
 
+# ===== Paralelismo adaptativo (AIMD-like) =====
+# Hard cap absoluto — admin não consegue passar disso via Settings. Protege
+# contra config errada que estouraria conexões SSH (Paramiko abre 1 thread
+# + socket por sessão; 10+ em paralelo é receita pra OOM/exhaustion).
+WORKERS_HARD_CAP = 8
+# Sample da telemetria a cada N segundos pelo monitor em background.
+HEALTH_SAMPLE_INTERVAL_SEG = 5
+# Quantos sucessos consecutivos sem stress até o monitor sugerir +1 worker
+# (additive increase). Inspirado em TCP slow-start.
+SUCESSOS_PARA_SUBIR = 3
+
 PURGA_LOGS_JOB_ID = "purga_logs_diaria"
 
 
@@ -50,18 +62,21 @@ def _ext_arquivo(nome: str | None) -> str:
 
 
 async def executar_backups():
-    """Job diário que pola SSH/Telnet/API sequencialmente.
+    """Job diário que pola SSH/Telnet/API com paralelismo adaptativo.
 
-    Comportamento v2 (delay adaptativo):
-    - Após cada device, calcula um delay proporcional à duração do anterior
-      (lê Configuracao.backup_delay_min_seg e backup_delay_fator) e aguarda
-      esse tempo antes do próximo. Dá fôlego pro container/rede quando há
-      muitos devices, e o tempo total da janela cresce de forma previsível.
-    - Detecta picos (duração > N× a média histórica do device) e alerta no
-      Telegram (categoria volume_alto) + WARNING crítico em docker logs.
-    - Detecta redução suspeita de tamanho (< 50% do último sucesso com a
-      mesma extensão) e alerta — sem converter em falha (a config pode ter
-      genuinamente encolhido).
+    Comportamento v2.x:
+    - DOIS POOLS independentes: API (mais agressivo, default cap 4) e
+      SSH/Telnet (conservador, default cap 2). Cada pool tem seu target
+      dinâmico que sobe gradualmente.
+    - Telemetria contínua (psutil) sample a cada 5s — média móvel 60s
+      de CPU e RAM. Decisões só consideram a média, não pico isolado.
+    - AIMD: a cada SUCESSOS_PARA_SUBIR sucessos de um pool sem stress,
+      target += 1 (até o cap). Stress detectado → target //= 2.
+    - Auto OFF (backup_workers_auto=False) trava em target=1 (modo legado).
+    - Delay adaptativo aplicado POR WORKER (cada slot espera antes do próximo
+      device da sua fila).
+    - Picos/reduções de tamanho detectados igual antes; alertas Telegram
+      idem.
     """
     inicio = datetime.now(timezone.utc)
     log_run = LogScheduler(inicio=inicio)
@@ -69,10 +84,9 @@ async def executar_backups():
     async with AsyncSessionLocal() as db:
         db.add(log_run)
         await db.flush()
+        log_id = log_run.id
 
-        # Lê parâmetros de tuning (ou cria com defaults). Lê 1x no início e
-        # reusa — mesmo que o admin mude no meio da run, o ritmo se mantém
-        # consistente até a próxima execução.
+        # Lê config 1x no início — mudanças durante a run só valem na próxima.
         config = (await db.execute(select(Configuracao))).scalar_one_or_none()
         if config is None:
             config = Configuracao()
@@ -81,24 +95,71 @@ async def executar_backups():
         delay_min = max(0, int(config.backup_delay_min_seg or 0))
         delay_fator = max(0.0, float(config.backup_delay_fator or 0.0))
         pico_fator = max(1.0, float(config.backup_pico_fator_critico or 3.0))
+        workers_max_api = min(WORKERS_HARD_CAP, max(1, int(config.backup_workers_max_api or 4)))
+        workers_max_ssh = min(WORKERS_HARD_CAP, max(1, int(config.backup_workers_max_ssh or 2)))
+        cpu_limite = max(30, min(95, int(config.backup_cpu_limite_pct or 80)))
+        mem_limite = max(30, min(95, int(config.backup_mem_limite_pct or 80)))
+        auto_tuning = bool(config.backup_workers_auto if config.backup_workers_auto is not None else True)
+
+        # Estado compartilhado entre coleta + monitor + workers.
+        # Mutável: vivem em dict pra captura por referência sem `nonlocal`.
+        state: dict = {
+            "target_api": 1,        # workers atuais permitidos no pool API
+            "target_ssh": 1,        # workers atuais permitidos no pool SSH/Telnet
+            "max_api": 1,           # pico de target_api durante a run
+            "max_ssh": 1,           # pico de target_ssh
+            "sucessos_api": 0,      # contador AIMD do pool API (zera ao subir)
+            "sucessos_ssh": 0,      # idem SSH/Telnet
+            "tempo_stress_seg": 0,  # acumula segundos com CPU/mem > limite
+            "parar": False,         # flag pra encerrar monitor ao fim
+        }
+
+        # Quando auto OFF, trava em 1 — caps "max_*" também = 1.
+        if not auto_tuning:
+            workers_max_api = 1
+            workers_max_ssh = 1
+
+        # Inicializa telemetria (psutil warm-up).
+        health = HealthMonitor()
+        health.start()
 
         total = sucessos = falhas = 0
         picos_detectados = 0
         alertas_tamanho_run = 0
-        duracoes: list[int] = []  # uma entrada por device — pra média da run
-        # Coleta as falhas/picos pra decidir individual vs bundle no fim.
+        duracoes: list[int] = []
         falhas_da_run: list[tuple[Device, str, int | None]] = []
-        alertas_da_run: list[tuple[Device, str, int | None]] = []  # picos + reduções de tamanho
+        alertas_da_run: list[tuple[Device, str, int | None]] = []
+        # Lock pra proteger atualizações nos contadores acima — múltiplos
+        # workers chamam _registrar_resultado concorrente.
+        contadores_lock = asyncio.Lock()
+
+        async def _registrar_resultado(
+            device: Device, ok: bool, erro_msg, duracao_seg, alerta_tipo, alerta_msg, pool_nome: str,
+        ):
+            """Centraliza incremento de contadores e listas. Chamado por todos
+            os workers — protegido por lock pra não ter race em duracoes/falhas."""
+            nonlocal total, sucessos, falhas, picos_detectados, alertas_tamanho_run
+            async with contadores_lock:
+                if duracao_seg is not None:
+                    duracoes.append(duracao_seg)
+                if ok:
+                    sucessos += 1
+                    # AIMD additive: sucesso conta pra subir o target do pool.
+                    state[f"sucessos_{pool_nome}"] += 1
+                else:
+                    falhas += 1
+                    falhas_da_run.append((device, erro_msg, device.empresa_id))
+                    # Falha NÃO conta como sucesso pro AIMD, mas também não força
+                    # corte automático — só se telemetria mostrar stress real.
+                if alerta_tipo == "pico":
+                    picos_detectados += 1
+                    alertas_da_run.append((device, alerta_msg, device.empresa_id))
+                elif alerta_tipo == "reducao":
+                    alertas_tamanho_run += 1
+                    alertas_da_run.append((device, alerta_msg, device.empresa_id))
 
         try:
-            # Devices em modo push (ftp_push/sftp_push/tftp_push) se auto-enviam
-            # via servidor embutido. Não devem ser polados pelo scheduler — não
-            # têm credencial SSH cadastrada e geravam falso-positivo de "senha
-            # não cadastrada" no alerta Telegram.
-            # Também filtra devices marcados como "manual apenas" (admin pediu
-            # explicitamente pra não rodar no automático).
-            # Ordenação por id garante reprodutibilidade — admin sabe quem
-            # tende a ser primeiro / último na janela.
+            # Carrega devices pull (não-push, não-manual).
             result = await db.execute(
                 select(Device).where(
                     Device.ativo == True,
@@ -108,34 +169,43 @@ async def executar_backups():
                     )),
                 ).order_by(Device.id)
             )
-            devices = result.scalars().all()
-            total = len(devices)
+            devices_all = result.scalars().all()
+            total = len(devices_all)
 
-            for idx, device in enumerate(devices):
-                ok, erro_msg, duracao_seg, alerta_tipo, alerta_msg = await _backup_device(
-                    db, device, log_run.id, pico_fator,
+            # Separa por pool. Pula API pra pool dedicado; SSH+Telnet compartilham
+            # o pool "ssh" (ambos via Paramiko/Netmiko — mesma classe de carga).
+            devices_api = [d for d in devices_all if d.protocolo == Protocolo.api]
+            devices_ssh = [d for d in devices_all if d.protocolo in (Protocolo.ssh, Protocolo.telnet)]
+
+            # Dispara monitor de telemetria em background — ajusta target_api/ssh
+            # baseado em CPU/RAM. Cancelado no `finally`.
+            monitor_task = asyncio.create_task(
+                _monitor_telemetria(
+                    health, state, cpu_limite, mem_limite,
+                    workers_max_api, workers_max_ssh, auto_tuning,
                 )
-                if duracao_seg is not None:
-                    duracoes.append(duracao_seg)
-                if ok:
-                    sucessos += 1
-                else:
-                    falhas += 1
-                    falhas_da_run.append((device, erro_msg, device.empresa_id))
+            )
 
-                if alerta_tipo == "pico":
-                    picos_detectados += 1
-                    alertas_da_run.append((device, alerta_msg, device.empresa_id))
-                elif alerta_tipo == "reducao":
-                    alertas_tamanho_run += 1
-                    alertas_da_run.append((device, alerta_msg, device.empresa_id))
-
-                # Delay adaptativo antes do PRÓXIMO device (não pra o último).
-                if idx < total - 1 and (delay_min > 0 or delay_fator > 0):
-                    base = duracao_seg if duracao_seg is not None else 0
-                    delay = max(delay_min, int(round(delay_fator * base)))
-                    if delay > 0:
-                        await asyncio.sleep(delay)
+            try:
+                # Roda os dois pools em paralelo. Cada pool é uma fila + N workers
+                # dinâmicos que leem state["target_<pool>"] antes de cada device.
+                await asyncio.gather(
+                    _executar_pool(
+                        "api", devices_api, state, log_id, pico_fator,
+                        delay_min, delay_fator, _registrar_resultado,
+                    ),
+                    _executar_pool(
+                        "ssh", devices_ssh, state, log_id, pico_fator,
+                        delay_min, delay_fator, _registrar_resultado,
+                    ),
+                )
+            finally:
+                state["parar"] = True
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
             fim = datetime.now(timezone.utc)
             log_run.fim = fim
@@ -146,6 +216,9 @@ async def executar_backups():
             log_run.duracao_media_segundos = (sum(duracoes) / len(duracoes)) if duracoes else None
             log_run.picos_detectados = picos_detectados
             log_run.alertas_tamanho = alertas_tamanho_run
+            log_run.workers_max_atingido_api = state["max_api"]
+            log_run.workers_max_atingido_ssh = state["max_ssh"]
+            log_run.tempo_sob_stress_seg = state["tempo_stress_seg"]
             await db.commit()
 
             await _disparar_alertas_telegram(db, falhas_da_run)
@@ -161,8 +234,161 @@ async def executar_backups():
             log_run.duracao_media_segundos = (sum(duracoes) / len(duracoes)) if duracoes else None
             log_run.picos_detectados = picos_detectados
             log_run.alertas_tamanho = alertas_tamanho_run
+            log_run.workers_max_atingido_api = state["max_api"]
+            log_run.workers_max_atingido_ssh = state["max_ssh"]
+            log_run.tempo_sob_stress_seg = state["tempo_stress_seg"]
             log_run.erro_geral = traceback.format_exc()
             await db.commit()
+
+
+async def _monitor_telemetria(
+    health: HealthMonitor, state: dict,
+    cpu_limite: int, mem_limite: int,
+    workers_max_api: int, workers_max_ssh: int,
+    auto_tuning: bool,
+) -> None:
+    """Loop de fundo que sample CPU/RAM a cada HEALTH_SAMPLE_INTERVAL_SEG
+    e ajusta state['target_api']/['target_ssh'] (AIMD).
+
+    Quando auto_tuning=False, ainda roda mas não muda targets — só acumula
+    tempo_stress_seg pra log (útil pra admin saber se a infra tava saturada
+    mesmo em modo single-worker)."""
+    try:
+        while not state["parar"]:
+            await asyncio.sleep(HEALTH_SAMPLE_INTERVAL_SEG)
+            amostra = health.sample()
+            stress = health.sob_stress(cpu_limite, mem_limite)
+            if stress:
+                state["tempo_stress_seg"] += HEALTH_SAMPLE_INTERVAL_SEG
+                log.warning(
+                    "STRESS scheduler: cpu_media=%.0f%% mem_media=%.0f%% (limites %d/%d)",
+                    health.cpu_media(), health.mem_media(), cpu_limite, mem_limite,
+                )
+
+            if not auto_tuning:
+                continue
+
+            if stress:
+                # Multiplicative decrease — corta workers pela metade (mínimo 1).
+                novo_api = max(1, state["target_api"] // 2)
+                novo_ssh = max(1, state["target_ssh"] // 2)
+                if novo_api != state["target_api"] or novo_ssh != state["target_ssh"]:
+                    log.warning(
+                        "SCHEDULER ↓ target: api=%d→%d ssh=%d→%d (stress detectado)",
+                        state["target_api"], novo_api, state["target_ssh"], novo_ssh,
+                    )
+                state["target_api"] = novo_api
+                state["target_ssh"] = novo_ssh
+                # Reseta contadores de sucesso — não queremos subir logo após cair.
+                state["sucessos_api"] = 0
+                state["sucessos_ssh"] = 0
+            else:
+                # Additive increase — sobe 1 worker do pool que acumulou sucessos.
+                if state["sucessos_api"] >= SUCESSOS_PARA_SUBIR and state["target_api"] < workers_max_api:
+                    state["target_api"] += 1
+                    state["sucessos_api"] = 0
+                    state["max_api"] = max(state["max_api"], state["target_api"])
+                    log.info("SCHEDULER ↑ target_api=%d", state["target_api"])
+                if state["sucessos_ssh"] >= SUCESSOS_PARA_SUBIR and state["target_ssh"] < workers_max_ssh:
+                    state["target_ssh"] += 1
+                    state["sucessos_ssh"] = 0
+                    state["max_ssh"] = max(state["max_ssh"], state["target_ssh"])
+                    log.info("SCHEDULER ↑ target_ssh=%d", state["target_ssh"])
+    except asyncio.CancelledError:
+        # Esperado quando executar_backups termina e cancela o monitor.
+        return
+
+
+async def _executar_pool(
+    pool_nome: str, devices: list, state: dict, log_id: int, pico_fator: float,
+    delay_min: int, delay_fator: float, registrar_callback,
+) -> None:
+    """Executa um pool de coletas em paralelo. Número de workers cresce/encolhe
+    conforme state['target_<pool>'].
+
+    Cada worker é uma task que pega da queue, processa o device em uma session
+    SQLAlchemy própria (importante: sessions não são thread-safe) e libera o slot.
+    """
+    if not devices:
+        return
+
+    queue: asyncio.Queue = asyncio.Queue()
+    for d in devices:
+        queue.put_nowait(d)
+
+    target_key = f"target_{pool_nome}"
+    max_key = f"max_{pool_nome}"
+    workers_ativos: set[asyncio.Task] = set()
+
+    async def _worker():
+        """Loop do worker: pega da fila, processa, aplica delay, repete."""
+        while True:
+            try:
+                device = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            try:
+                # Cada worker abre sua própria SQLAlchemy session — sessions
+                # não toleram uso compartilhado entre coroutines concorrentes
+                # (cursor compartilhado dá race fácil).
+                async with AsyncSessionLocal() as db_worker:
+                    ok, erro_msg, duracao_seg, alerta_tipo, alerta_msg = await _backup_device(
+                        db_worker, device, log_id, pico_fator,
+                    )
+                    await db_worker.commit()
+                await registrar_callback(
+                    device, ok, erro_msg, duracao_seg, alerta_tipo, alerta_msg, pool_nome,
+                )
+            except Exception:
+                # Não deixa o worker morrer silencioso — loga e segue.
+                log.exception("Worker pool=%s falhou em device id=%s", pool_nome, getattr(device, "id", "?"))
+            # Delay adaptativo antes do próximo device DESTE worker. Outros
+            # workers do mesmo pool podem estar pegando devices ao mesmo tempo;
+            # não há sincronização global de delay (intencional — pool maior =
+            # janela total menor; o delay é só fôlego entre coletas do MESMO worker).
+            if not queue.empty() and (delay_min > 0 or delay_fator > 0):
+                base = duracao_seg if "duracao_seg" in locals() and duracao_seg else 0
+                delay = max(delay_min, int(round(delay_fator * base)))
+                if delay > 0:
+                    await asyncio.sleep(delay)
+
+    # Loop de orquestração: cresce/encolhe o número de workers ativos pra
+    # bater state[target_key]. Lê target_key a cada iteração — assim o
+    # monitor de telemetria pode mexer em tempo real.
+    while not queue.empty() or workers_ativos:
+        # Limpa tasks já completas.
+        completas = [t for t in workers_ativos if t.done()]
+        for t in completas:
+            workers_ativos.discard(t)
+            # `await t` pra propagar exceção; já loggamos no worker, então só
+            # garante que não fica como pending exception.
+            try:
+                await t
+            except Exception:
+                pass
+
+        target = state[target_key]
+        # Spawna workers até atingir target (ou esvaziar a fila).
+        while len(workers_ativos) < target and not queue.empty():
+            t = asyncio.create_task(_worker())
+            workers_ativos.add(t)
+            state[max_key] = max(state[max_key], len(workers_ativos))
+
+        # Quando target encolhe (monitor cortou), não matamos workers no meio
+        # de uma coleta — apenas paramos de spawnar novos. Workers ativos
+        # terminam o device atual e morrem naturalmente quando a fila esvazia.
+
+        if workers_ativos:
+            # Espera pelo menos UM worker terminar antes de re-avaliar target.
+            # Timeout curto pra reagir rápido a mudanças no target.
+            await asyncio.wait(
+                workers_ativos, return_when=asyncio.FIRST_COMPLETED, timeout=1.0,
+            )
+        elif not queue.empty():
+            # Sem workers ativos mas com fila pendente — pode acontecer se
+            # target=0 (não devia, mas garantia extra). Espera um pouco e
+            # re-avalia.
+            await asyncio.sleep(0.5)
 
 
 async def _disparar_alertas_telegram(
@@ -229,7 +455,11 @@ async def _backup_device(
     erro_tb: str | None = None
 
     try:
-        status, conteudo = run_backup(device)
+        # run_backup é síncrono (Paramiko/Netmiko/librouteros). Em paralelismo
+        # com asyncio.gather + múltiplos workers, chamada direta bloquearia o
+        # event loop e serializaria tudo de novo. asyncio.to_thread joga pra
+        # uma worker thread → paralelismo real.
+        status, conteudo = await asyncio.to_thread(run_backup, device)
         duracao = int(round(time.monotonic() - t_inicio))
         if status != "sucesso":
             erro_resumido = (conteudo or "Falha sem detalhe").splitlines()[0][:300]
