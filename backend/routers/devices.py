@@ -242,17 +242,22 @@ async def criar_device(
     # Sao_Paulo na sessão API. Best-effort — se falhar (Mikrotik offline,
     # permissão insuficiente, etc.), loga aviso mas não bloqueia a criação.
     # Roda em thread separada pra não travar o request com socket sync.
+    # Logs em WARNING porque uvicorn default suprime INFO de loggers próprios.
     if is_api:
         import asyncio as _asyncio
         from services.mikrotik_api import aplicar_config_padrao
+        log.warning("Device %s: iniciando aplicar_config_padrao (API)", device.id)
         try:
             ok, msg = await _asyncio.wait_for(
-                _asyncio.to_thread(aplicar_config_padrao, device),
-                timeout=15.0,
+                _asyncio.to_thread(aplicar_config_padrao, device.id),
+                timeout=20.0,
             )
-            log.info("Device %s: aplicar_config_padrao ok=%s msg=%s", device.id, ok, msg)
+            log.warning("Device %s: aplicar_config_padrao ok=%s msg=%s", device.id, ok, msg)
+        except _asyncio.TimeoutError:
+            log.warning("Device %s: aplicar_config_padrao TIMEOUT (>20s) — Mikrotik offline ou lento", device.id)
         except Exception as e:
-            log.warning("Device %s: aplicar_config_padrao exception: %s", device.id, e)
+            log.warning("Device %s: aplicar_config_padrao exception: %s: %s",
+                        device.id, type(e).__name__, e)
 
     out = DeviceOut.model_validate(device)
     if ftp_senha_plain:

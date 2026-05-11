@@ -12,6 +12,15 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.9] - 2026-05-11
+
+### Corrigido
+
+- **`aplicar_config_padrao` não rodava na criação de device API mesmo com v1.4.8.** Investigação no device 54 (CCR1009): a função funcionava perfeitamente quando rodada manualmente via Python (NTP + timezone aplicados), mas via endpoint `POST /api/devices/` não atingia o equipamento. Duas causas em paralelo:
+  - **(a) Logs do nível INFO eram suprimidos** pelo uvicorn default — `log.info("Device X: aplicar_config_padrao ok=...")` nunca aparecia, então parecia que a função não rodava. Trocado pra `log.warning` (que aparece) + linha explícita "iniciando aplicar_config_padrao" antes do try.
+  - **(b) Passar objeto SQLAlchemy AsyncSession entre threads via `to_thread` é frágil** — `device` carregado em AsyncSession podia disparar lazy load em thread separada e falhar silenciosamente. Refatorado: `aplicar_config_padrao(device_id)` agora aceita só o ID e abre `SyncSession` internamente pra recarregar — autossuficiente, sem dependência da sessão async do request.
+- **Timeout aumentado de 15s pra 20s** pra cobrir Mikrotik em LAN remota com latência alta.
+
 ## [1.4.8] - 2026-05-11
 
 ### Corrigido

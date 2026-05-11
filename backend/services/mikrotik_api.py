@@ -306,7 +306,7 @@ def _cleanup_orfaos_nexus(api) -> int:
     return removidos
 
 
-def aplicar_config_padrao(device: Device) -> tuple[bool, str]:
+def aplicar_config_padrao(device_id: int) -> tuple[bool, str]:
     """Aplica NTP cliente (apontando pro nosso server) + timezone via API.
 
     Idempotente — se já está configurado igual, RouterOS não dá erro.
@@ -315,9 +315,19 @@ def aplicar_config_padrao(device: Device) -> tuple[bool, str]:
 
     Chamado após criação do device API (uma vez). NÃO chamado em todo backup
     pra evitar mexer em config do equipamento sem ação consciente do admin.
+
+    Recebe device_id (não o objeto Device) porque caller roda em thread
+    separada via to_thread — passar objeto de AsyncSession entre threads
+    pode disparar erros opacos no SQLAlchemy. Recarrega via SyncSession
+    aqui, autossuficiente.
     """
     if not settings.FTP_MASQUERADE_ADDRESS:
         return False, "FTP_MASQUERADE_ADDRESS vazio — sem endereço pro NTP."
+
+    with SyncSessionLocal() as db:
+        device = db.execute(select(Device).where(Device.id == device_id)).scalar_one_or_none()
+    if not device:
+        return False, f"device id={device_id} não encontrado no banco"
 
     try:
         api = _connect(device)
