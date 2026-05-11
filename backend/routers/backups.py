@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from database import get_db
 from models import Backup, Device, User, UserRole, TipoAtividade
@@ -89,6 +89,65 @@ async def executar_backup_manual(
         detalhe=(conteudo[:180] if status == "falha" and conteudo else None),
     )
     return backup
+
+@router.delete("/", status_code=204,
+               dependencies=[Depends(require_role(UserRole.admin, UserRole.admin_empresa))])
+async def deletar_backups_em_massa(
+    request: Request,
+    status: str = Query(..., pattern="^(falha|sucesso)$"),
+    empresa_id: Optional[int] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Apaga em massa todos os backups que casam com o filtro.
+
+    Por enquanto só aceita filtro por `status` (falha|sucesso) — caso de uso
+    principal é "limpar tudo que falhou" pra reduzir ruído na listagem.
+
+    Escopo:
+    - admin (master): pode apagar de qualquer empresa; passa empresa_id pra
+      restringir, ou omite pra apagar global.
+    - admin_empresa: força automaticamente pra empresa do user (ignora
+      empresa_id no payload, mesmo padrão do DELETE de /atividades).
+    """
+    # Define o escopo de empresa que será apagado.
+    if is_master(user):
+        escopo_empresa = empresa_id  # None = global
+    else:
+        if user.empresa_id is None:
+            raise HTTPException(status_code=403, detail="Usuário sem empresa associada")
+        escopo_empresa = user.empresa_id
+
+    # Conta antes pra registrar na auditoria e devolver 200 limpo se 0.
+    # Usamos JOIN com devices pra aplicar filtro de empresa — backup não tem
+    # empresa_id direto (vem via device).
+    count_q = select(Backup.id).join(Device, Backup.device_id == Device.id).where(Backup.status == status)
+    if escopo_empresa is not None:
+        count_q = count_q.where(Device.empresa_id == escopo_empresa)
+    ids = [row[0] for row in (await db.execute(count_q)).fetchall()]
+    total = len(ids)
+
+    if total == 0:
+        # Idempotente — nada a apagar é resposta válida, não 404.
+        return None
+
+    # DELETE em lote por id (mais simples que tentar usar subquery com JOIN
+    # no DELETE — PostgreSQL aceita mas SQLAlchemy 2.x async fica chato com
+    # synchronize_session). 1 round-trip a mais mas é correto e seguro.
+    await db.execute(delete(Backup).where(Backup.id.in_(ids)))
+
+    # Audit: 1 registro consolidado com a contagem — não polui auditoria com
+    # N entradas, mas o admin consegue ver "X backups com status=falha foram
+    # removidos por fulano em tal momento".
+    await audit.registrar(
+        db, tipo=TipoAtividade.backup_removido, user=user, request=request,
+        empresa_id=escopo_empresa,
+        alvo_tipo="backup_bulk", alvo_nome=f"status={status}",
+        detalhe=f"{total} backup(s) removidos em massa",
+    )
+    await db.commit()
+    return None
+
 
 @router.delete("/{backup_id}", status_code=204,
                dependencies=[Depends(require_role(UserRole.admin, UserRole.admin_empresa))])

@@ -94,6 +94,26 @@ export default function Backups() {
     }
   }
 
+  // Limpeza em massa de backups com falha. Usado pra reduzir ruído na lista —
+  // depois de uma queda de internet ou problema sistêmico, dezenas de devices
+  // podem ter falhado em sequência e poluem a listagem por dias até serem
+  // expurgados pela retenção. O escopo é decidido pelo backend conforme o
+  // user (admin_empresa = só a própria empresa; admin master = global).
+  async function deletarFalhasEmMassa() {
+    const totalFalhas = backups.filter(b => b.status === 'falha').length
+    if (totalFalhas === 0) return
+    if (!confirm(
+      `Apagar ${totalFalhas} backup${totalFalhas !== 1 ? 's' : ''} com status "falha"?\n\n` +
+      `Backups bem-sucedidos NÃO serão afetados. Esta ação não pode ser desfeita.`
+    )) return
+    try {
+      await api.delete('/backups/', { params: { status: 'falha' } })
+      load()
+    } catch (err) {
+      alert(`Falha ao apagar em massa: ${err?.response?.data?.detail || err.message}`)
+    }
+  }
+
   async function download(b) {
     const token = localStorage.getItem('token')
     const res = await fetch(`/api/backups/${b.id}/download`, {
@@ -206,6 +226,10 @@ export default function Backups() {
   }
 
   const todosExpandidos = grupos.length > 0 && expandidos.size === grupos.length
+  // Contador de falhas no escopo atual (todas as empresas que o user enxerga,
+  // não só as filtradas) — o backend faz o mesmo escopo e o usuário precisa
+  // ver o total real pra decidir se vale clicar.
+  const totalFalhas = useMemo(() => backups.filter(b => b.status === 'falha').length, [backups])
 
   return (
     <div className="space-y-6">
@@ -215,6 +239,17 @@ export default function Backups() {
           <p className="text-slate-400 text-sm mt-1">Histórico dos últimos 7 backups por dispositivo</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Limpeza em massa de falhas — só pra quem pode deletar e quando ha
+              pelo menos 1 falha no escopo atual. Cor vermelha sinaliza acao
+              destrutiva, mas o tom esmaecido (border, nao filled) evita ficar
+              chamativo demais ao lado do "Atualizar" amigavel. */}
+          {canDelete && totalFalhas > 0 && (
+            <button onClick={deletarFalhasEmMassa}
+              title="Apaga todos os backups com status 'falha' visíveis pra você"
+              className="flex items-center justify-center gap-2 text-red-400 hover:text-white hover:bg-red-500/20 border border-red-500/40 px-3 py-2 rounded-lg text-sm transition-colors flex-1 sm:flex-none">
+              <Trash2 size={15} /> Excluir falhas ({totalFalhas})
+            </button>
+          )}
           {grupos.length > 0 && (
             <button onClick={todosExpandidos ? recolherTodos : expandirTodos}
               className="text-slate-400 hover:text-white border border-slate-600 px-3 py-2 rounded-lg text-sm transition-colors flex-1 sm:flex-none">
