@@ -534,6 +534,10 @@ export default function Devices() {
   const [filtroFabricante, setFiltroFabricante] = useState('todos')
   const [filtroTipo, setFiltroTipo] = useState('todos')
   const [filtroStatus, setFiltroStatus] = useState('todos')
+  // Ordenação da tabela. Default = ID decrescente (último cadastrado no topo).
+  // É o que faz mais sentido pra gestão diária — admin acabou de cadastrar e quer ver no topo.
+  const [ordenarPor, setOrdenarPor] = useState('id')
+  const [direcao, setDirecao] = useState('desc')
   // Separa visualmente OLT/equipamentos de NMS UNM2000 — mesmos models, fluxos
   // diferentes (UNM2000 é receptor, sempre push, senha 20 chars). 'olt' é default.
   const [aba, setAba] = useState('olt')
@@ -574,13 +578,48 @@ export default function Devices() {
     })
   }, [devicesPorAba, busca, filtroFabricante, filtroTipo, filtroStatus])
 
+  // Sort estável aplicado DEPOIS dos filtros. Comparações de texto usam
+  // localeCompare(pt-BR, numeric:true) — assim "R2" vem antes de "R10" e
+  // dígitos antes de letras (R2 antes de Roteador-1) sem hack manual.
+  // Direção: 'asc' (1→9, A→Z, antigo→novo) ou 'desc' (inverso).
+  const devicesOrdenados = useMemo(() => {
+    const mult = direcao === 'asc' ? 1 : -1
+    const cmpTexto = (a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }) * mult
+
+    const sorters = {
+      id: (a, b) => (a.id - b.id) * mult,
+      nome: (a, b) => cmpTexto(a.nome || '', b.nome || ''),
+      tipo: (a, b) => cmpTexto(TIPO_LABEL[a.tipo] || 'Roteador', TIPO_LABEL[b.tipo] || 'Roteador'),
+      fabricante: (a, b) => cmpTexto(labelFabricante(a.fabricante), labelFabricante(b.fabricante)),
+      protocolo: (a, b) => cmpTexto(PROTOCOL_LABEL[a.protocolo] || 'SSH', PROTOCOL_LABEL[b.protocolo] || 'SSH'),
+      // ASC = ativos primeiro (mais útil pro dia-a-dia); DESC = inativos primeiro
+      ativo: (a, b) => ((b.ativo ? 1 : 0) - (a.ativo ? 1 : 0)) * mult,
+      ultimo_backup: (a, b) => {
+        // Devices sem backup vão SEMPRE pro fim, independente da direção —
+        // o leitor quer ver os com data ordenados, não "sem backup" empilhados no topo.
+        const ah = !!a.ultimo_backup_em
+        const bh = !!b.ultimo_backup_em
+        if (!ah && !bh) return 0
+        if (!ah) return 1
+        if (!bh) return -1
+        return (new Date(a.ultimo_backup_em).getTime() - new Date(b.ultimo_backup_em).getTime()) * mult
+      },
+    }
+    const cmp = sorters[ordenarPor] || sorters.id
+    return [...devicesFiltrados].sort(cmp)
+  }, [devicesFiltrados, ordenarPor, direcao])
+
   const filtroAtivo = busca.trim() !== '' || filtroFabricante !== 'todos' || filtroTipo !== 'todos' || filtroStatus !== 'todos'
+  // Ordenação "não-default" entra no botão Limpar — assim o usuário tem 1 clique pra voltar ao padrão (ID desc)
+  const ordenacaoNaoDefault = ordenarPor !== 'id' || direcao !== 'desc'
 
   function limparFiltros() {
     setBusca('')
     setFiltroFabricante('todos')
     setFiltroTipo('todos')
     setFiltroStatus('todos')
+    setOrdenarPor('id')
+    setDirecao('desc')
   }
 
   async function load() {
@@ -842,7 +881,31 @@ export default function Devices() {
             <option key={s.value} value={s.value}>{s.label}</option>
           ))}
         </select>
-        {filtroAtivo && (
+        {/* Ordenação — não filtra, só reordena os já-filtrados acima */}
+        <select
+          value={ordenarPor}
+          onChange={e => setOrdenarPor(e.target.value)}
+          title="Ordenar por"
+          className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
+        >
+          <option value="id">Ordenar por ID</option>
+          <option value="nome">Ordenar por Nome</option>
+          <option value="tipo">Ordenar por Tipo</option>
+          <option value="fabricante">Ordenar por Fabricante</option>
+          <option value="protocolo">Ordenar por Protocolo</option>
+          <option value="ativo">Ordenar por Ativo</option>
+          <option value="ultimo_backup">Ordenar por Último backup</option>
+        </select>
+        <select
+          value={direcao}
+          onChange={e => setDirecao(e.target.value)}
+          title="Direção"
+          className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-500"
+        >
+          <option value="asc">Crescente (1→9, A→Z)</option>
+          <option value="desc">Decrescente (9→1, Z→A)</option>
+        </select>
+        {(filtroAtivo || ordenacaoNaoDefault) && (
           <button
             onClick={limparFiltros}
             className="text-slate-400 hover:text-white text-sm px-3 py-2 border border-slate-600 hover:border-slate-500 rounded-lg transition-colors"
@@ -874,10 +937,10 @@ export default function Devices() {
             {devices.length === 0 && (
               <tr><td colSpan={canEdit ? 9 : 8} className="text-center text-slate-400 py-10">Nenhum dispositivo cadastrado</td></tr>
             )}
-            {devices.length > 0 && devicesFiltrados.length === 0 && (
+            {devices.length > 0 && devicesOrdenados.length === 0 && (
               <tr><td colSpan={canEdit ? 9 : 8} className="text-center text-slate-400 py-10">Nenhum dispositivo corresponde aos filtros</td></tr>
             )}
-            {devicesFiltrados.map(d => (
+            {devicesOrdenados.map(d => (
               <tr key={d.id} className="hover:bg-slate-700/40 transition-colors">
                 <td className="px-5 py-3.5 text-xs font-mono text-slate-400">{formatDeviceId(d.id)}</td>
                 <td className="px-5 py-3.5 font-medium text-white">
