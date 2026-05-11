@@ -156,13 +156,19 @@ def _find_file(api, nome: str) -> dict | None:
     return None
 
 
-def _export_via_upload_sftp(api, device: Device) -> str:
+def _export_via_upload_ftp(api, device: Device) -> str:
     """Plano C: faz o Mikrotik gerar /export file=tmp.rsc e usar /tool/fetch
-    upload=yes mode=sftp pra empurrar o arquivo pro nosso SFTP server.
+    upload=yes mode=ftp pra empurrar o arquivo pro nosso FTP server.
 
-    Usa cred SFTP auto-gerada do device (Device.ftp_user + ftp_senha_enc).
+    Why FTP e não SFTP: RouterOS `/tool/fetch mode=` aceita só ftp/http/https/scp
+    (validado em prod 2026-05-11 — mode=sftp dispara "input does not match any
+    value of mode"). SCP exige subsystem exec no nosso paramiko, que não está
+    implementado. FTP plain funciona out-of-the-box com pyftpdlib que já roda
+    pra fluxo push. A credencial é única por device e gerada com 24 chars —
+    risco do tráfego plain em LAN/VPN é aceitável; rede pública NÃO deve usar.
+
     Pra evitar duplicação com a pipeline normal de push (que aplica dedupe
-    diário e apagaria os backups históricos do dia), o SFTP server consulta
+    diário e apagaria os backups históricos do dia), o FTP server consulta
     `_pending_api_uploads` ao receber um arquivo. Se device_id está
     registrado, entrega conteúdo direto na Queue desta função e PULA o
     `processar_upload`. Retorna conteúdo pro caller (run_backup) criar
@@ -170,7 +176,7 @@ def _export_via_upload_sftp(api, device: Device) -> str:
     """
     if not device.ftp_user or not device.ftp_senha_enc:
         raise RuntimeError(
-            "Device API sem credencial SFTP gerada (ftp_user/ftp_senha). "
+            "Device API sem credencial FTP gerada (ftp_user/ftp_senha). "
             "Recadastre o device — em v1.4.4+ a cred é gerada automaticamente."
         )
     if not settings.FTP_MASQUERADE_ADDRESS:
@@ -179,7 +185,7 @@ def _export_via_upload_sftp(api, device: Device) -> str:
             "Sem isso o Mikrotik não tem endereço pra enviar o backup."
         )
 
-    senha_sftp = decrypt(device.ftp_senha_enc)
+    senha_ftp = decrypt(device.ftp_senha_enc)
     nome_base = f"nexus-api-{device.id}-{int(time.time())}"
     nome_rsc = f"{nome_base}.rsc"
     nome_destino = f"backup-api-{device.id}-{int(time.time())}.rsc"
@@ -205,14 +211,15 @@ def _export_via_upload_sftp(api, device: Device) -> str:
             else:
                 raise
 
-        # 3) Dispara /tool/fetch upload=yes mode=sftp pro nosso server.
+        # 3) Dispara /tool/fetch upload=yes mode=ftp pro nosso FTP server.
+        # mode=sftp não existe no RouterOS — só ftp/http/https/scp.
         fetch_args = {
             "upload": "yes",
-            "mode": "sftp",
+            "mode": "ftp",
             "address": settings.FTP_MASQUERADE_ADDRESS,
-            "port": "22",
+            "port": "21",
             "user": device.ftp_user,
-            "password": senha_sftp,
+            "password": senha_ftp,
             "src-path": nome_rsc,
             "dst-path": nome_destino,
         }
@@ -220,7 +227,12 @@ def _export_via_upload_sftp(api, device: Device) -> str:
             list(api("/tool/fetch", **fetch_args))
         except Exception as e:
             _try_remove_file(api, nome_rsc)
-            raise RuntimeError(f"Falha no /tool/fetch upload pro SFTP do NEXUS: {e}")
+            raise RuntimeError(
+                f"Falha no /tool/fetch upload pro FTP do NEXUS: {e}. "
+                "Verifique permissões do usuário Mikrotik (precisa de "
+                "policy 'read,write,ftp,test,sensitive') e se há rota "
+                f"pra {settings.FTP_MASQUERADE_ADDRESS}:21."
+            )
 
         # 4) Aguarda a Queue ser populada pelo SFTP server (cross-thread).
         # Timeout generoso pra cobrir rede lenta / arquivo grande.
@@ -230,9 +242,9 @@ def _export_via_upload_sftp(api, device: Device) -> str:
             _try_remove_file(api, nome_rsc)
             raise RuntimeError(
                 f"/tool/fetch disparado mas arquivo não chegou em 60s. Possíveis "
-                f"causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:22, "
-                "firewall do NEXUS bloqueando, ou cred SFTP incorreta. Verifique "
-                "logs do SFTP server."
+                f"causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:21, "
+                "firewall do NEXUS bloqueando a faixa passiva 30000-30099, "
+                "ou cred FTP incorreta. Verifique logs do FTP server."
             )
 
         # 5) Cleanup do arquivo temp no Mikrotik.
@@ -278,12 +290,11 @@ def run_backup_via_api(device: Device) -> Tuple[str, str]:
         if texto and texto.strip():
             return "sucesso", texto
 
-        # Plano C — upload SFTP iniciado pelo Mikrotik. Pula o Plano B (file/print
-        # .contents) porque ele tem limite de ~4KB no firmware Mikrotik que
-        # quebra silenciosamente em configs maiores. O Plano C é robusto pra
-        # arquivos de qualquer tamanho — exige só FTP_MASQUERADE_ADDRESS
-        # configurado no .env e cred SFTP gerada no device (auto desde v1.4.4).
-        texto = _export_via_upload_sftp(api, device)
+        # Plano C — upload FTP iniciado pelo Mikrotik. Robusto pra arquivos
+        # de qualquer tamanho. Exige FTP_MASQUERADE_ADDRESS no .env + cred FTP
+        # gerada no device (auto desde v1.4.4) + policy 'write,ftp' no grupo
+        # do usuário no Mikrotik (read padrão não basta).
+        texto = _export_via_upload_ftp(api, device)
         if texto and texto.strip():
             return "sucesso", texto
         return "falha", "Export retornou vazio em todos os planos (A: vazio; C: arquivo recebido vazio)."

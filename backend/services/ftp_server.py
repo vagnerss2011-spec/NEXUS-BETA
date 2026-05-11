@@ -129,7 +129,12 @@ class DBAuthorizer(DummyAuthorizer):
             dev = db.execute(
                 select(Device).where(Device.ftp_user == username)
             ).scalar_one_or_none()
-            if not dev or not dev.ativo or dev.protocolo != Protocolo.ftp_push or not dev.ftp_senha_enc:
+            # Aceita protocolo ftp_push (fluxo push original) E api (Mikrotik
+            # que recebe /tool/fetch upload do backend pra empurrar o /export).
+            # RouterOS não tem mode=sftp em /tool/fetch — só ftp/http/https/scp —
+            # então Plano C usa FTP plain em vez de SFTP.
+            protocolos_aceitos = (Protocolo.ftp_push, Protocolo.api)
+            if not dev or not dev.ativo or dev.protocolo not in protocolos_aceitos or not dev.ftp_senha_enc:
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", ip, username)
                 auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=None,
                                       detalhe="usuário FTP inexistente ou device desabilitado",
@@ -145,7 +150,10 @@ class DBAuthorizer(DummyAuthorizer):
                 auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
                                       detalhe="senha incorreta", protocolo="FTP")
                 raise AuthenticationFailed("Authentication failed.")
-            if not _ip_match(ip, dev.ftp_origem_cidr):
+            # Whitelist só pra ftp_push (admin configura CIDR). Pra protocolo=api
+            # pula: backend dispara o upload sob demanda, cred única por device
+            # já garante autorização.
+            if dev.protocolo == Protocolo.ftp_push and not _ip_match(ip, dev.ftp_origem_cidr):
                 auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
                 auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
                                       detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}",
@@ -259,6 +267,17 @@ class NexusFTPHandler(FTPHandler):
             # mandou cada cfg). filepath aqui é o destino completo no disco;
             # basename pega só o nome enviado pelo cliente.
             conteudo = ler_arquivo_pra_persistir(filepath, nome_arquivo)
+
+            # Plano C de coleta via API Mikrotik (mesmo hook do SFTP server):
+            # se há run_backup_via_api esperando upload, entrega conteúdo direto
+            # na fila e pula processar_upload (que aplicaria dedupe diário e
+            # apagaria backups históricos). Caller cria backup origem='manual'.
+            from services.mikrotik_api import has_pending_api_upload, deliver_api_upload
+            if has_pending_api_upload(dev.id) and deliver_api_upload(dev.id, conteudo):
+                log.info("FTP %s: upload entregue ao Plano C da coleta API (device %s)",
+                         ip, dev.id)
+                return
+
             processar_upload(dev, conteudo, ip, tamanho, db,
                              nome_arquivo=nome_arquivo, protocolo="FTP")
             db.commit()

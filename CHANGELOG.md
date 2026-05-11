@@ -12,6 +12,22 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [1.4.6] - 2026-05-11
+
+### Corrigido
+
+- **Plano C falhava com `input does not match any value of mode`** ao chamar `/tool/fetch upload=yes mode=sftp`. RouterOS aceita só `ftp`, `http`, `https` e `scp` em `mode=` — **não existe `sftp`**. Mudado pra `mode=ftp` (porta 21) — nosso FTP server interno já trata o upload. SCP não usado porque exige subsystem `exec` no paramiko (não implementado).
+- **FTP server agora aceita protocolo=api** (mesma adaptação feita no SFTP server em v1.4.4): whitelist de IP é pulada quando `protocolo=api`, cred única gerada por device garante autorização. Sem isso, Mikrotik que abrisse conexão FTP no NEXUS levaria `AUTH_FAIL: usuário FTP inexistente ou device desabilitado`.
+- **Hook do Plano C também no FTP server** — antes só SFTP tinha o hook `has_pending_api_upload` / `deliver_api_upload`. Agora FTP também detecta e entrega na fila do Plano C em vez de chamar `processar_upload` (evita dedupe diário apagando históricos).
+
+### Sabidos
+
+- Mikrotik exige policy `write,ftp` no grupo do usuário (além de `read,sensitive`) pra `/tool/fetch upload` funcionar. Grupo `read` default NÃO basta. Comando:
+  ```
+  /user group add name=nexus-backup policy=read,write,test,sensitive,ftp,api
+  /user set <user> group=nexus-backup
+  ```
+
 ## [1.4.5] - 2026-05-11
 
 ### Corrigido
