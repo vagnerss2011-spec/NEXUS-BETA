@@ -12,6 +12,31 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.0.1] - 2026-05-12
+
+### Corrigido
+
+- **Regressão crítica do scheduler v3 (paralelismo): NENHUM backup automático
+  era inserido no banco.** No refactor pra paralelismo, cada worker abre uma
+  session SQLAlchemy própria (correto — sessions async não toleram uso
+  concorrente entre coroutines). Mas o `LogScheduler` da run era apenas
+  `flushed` (não commitado) na session principal antes dos workers
+  iniciarem — então as sessions paralelas, em transações próprias, **não
+  enxergavam o row do log_scheduler** quando tentavam inserir backups
+  referenciando `log_scheduler_id` (FK). Resultado: `ForeignKeyViolationError`
+  em todos os inserts da janela.
+  - Validado em prod: log_scheduler id=18 do backup.bandaa.net.br tinha
+    `total=4, sucessos=0, falhas=0` — devices coletaram via Paramiko, mas
+    nenhum row entrou em `backups`.
+  - Fix: trocar `await db.flush()` por `await db.commit()` + `db.refresh()`
+    ANTES de spawnar os workers. `expire_on_commit=False`
+    (`database.py`) garante que `log_run` continua válido pra updates
+    posteriores na mesma session principal. Mesma adaptação aplicada ao
+    `Configuracao` (consistência — se algum worker dependesse de config
+    recém-criada, mesma race aplicaria).
+  - Coletas manuais (botão "Executar backup" no painel) **NÃO eram
+    afetadas** — usam `log_scheduler_id=NULL` e session do request HTTP.
+
 ## [2.0.0] - 2026-05-11
 
 Major release consolidando o ciclo iniciado pós-v1.4.9. Mudanças significativas
@@ -526,7 +551,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.0...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.4.9...v2.0.0
 [1.2.3]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.1...v1.2.2

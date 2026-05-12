@@ -83,7 +83,14 @@ async def executar_backups():
 
     async with AsyncSessionLocal() as db:
         db.add(log_run)
-        await db.flush()
+        # COMMIT (não só flush!) — workers paralelos abrem sessions próprias e
+        # precisam enxergar log_run.id no banco pra inserir backups referenciando
+        # essa FK (backups.log_scheduler_id). Sem commit aqui, sessions paralelas
+        # caem em ForeignKeyViolationError (regressão da v2.0.0 paralelismo).
+        # expire_on_commit=False (database.py) garante que log_run continua
+        # utilizável pra updates posteriores na mesma session.
+        await db.commit()
+        await db.refresh(log_run)
         log_id = log_run.id
 
         # Lê config 1x no início — mudanças durante a run só valem na próxima.
@@ -91,7 +98,8 @@ async def executar_backups():
         if config is None:
             config = Configuracao()
             db.add(config)
-            await db.flush()
+            await db.commit()
+            await db.refresh(config)
         delay_min = max(0, int(config.backup_delay_min_seg or 0))
         delay_fator = max(0.0, float(config.backup_delay_fator or 0.0))
         pico_fator = max(1.0, float(config.backup_pico_fator_critico or 3.0))
