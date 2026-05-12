@@ -12,6 +12,44 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.0.2] - 2026-05-12
+
+### Corrigido
+
+- **Dedupe diário do push apagava silenciosamente as falhas do scheduler.**
+  `services/push_backup.py:processar_upload` fazia `DELETE FROM backups
+  WHERE device_id=N AND criado_em >= inicio_dia` antes de inserir o backup
+  push, pra evitar acumular múltiplos arquivos do mesmo dia. Cenário do bug:
+  1. Scheduler dispara Plano C (API Mikrotik + `/tool/fetch upload=yes`).
+  2. Mikrotik demora, scheduler timeout 60s, marca como `status='falha'`
+     com `log_scheduler_id=N` — row criada e commitada no banco.
+  3. Mikrotik finalmente termina o `/tool/fetch` e empurra o `.rsc` pro
+     FTP server interno do Nexus.
+  4. FTP server não acha mais entrada na `_pending_api_uploads` (já passou
+     o timeout), cai pra `processar_upload` regular.
+  5. **Dedupe deletava a row de falha** que o scheduler tinha criado, e
+     inseria o push como `sucesso` com `log_scheduler_id=NULL`.
+  Resultado: `log_scheduler.falhas` mostrava N > 0 mas o detalhe da run não
+  tinha NENHUM row de falha pra exibir — admin via "7 falhas" no header mas
+  zero detalhes no modal. Validado em prod: Camon run id=3 tinha
+  `falhas=7` e zero rows com `log_scheduler_id=3 AND status='falha'`.
+  - Fix: dedupe agora preserva falhas (`AND status='sucesso'` no WHERE do
+    DELETE). Falhas do dia ficam no histórico pra investigação, mesmo quando
+    push posterior entrega sucesso. Retenção (offset 7) continua aplicando
+    igualmente — limita acúmulo se device ficar em loop falhando.
+
+### Mudado
+
+- **Modal "Detalhes da execução do scheduler" prioriza falhas visualmente.**
+  Antes mostrava todos os backups numa lista linear (com falhas no topo via
+  `ORDER BY status` no backend), mas com 30+ devices os sucessos empurravam
+  as falhas pra fora da tela. Agora:
+  - **Falhas** sempre no topo, expandidas, com badge "N falhas — requer
+    atenção" em vermelho. Falhas sem `erro` registrado mostram "(sem detalhe
+    de erro registrado)" em vez de só o nome silencioso.
+  - **Sucessos** em accordion colapsável — fechado por default quando há
+    falhas (admin foca no que importa), aberto quando todos foram sucesso.
+
 ## [2.0.1] - 2026-05-12
 
 ### Corrigido
@@ -551,7 +589,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.1...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.4.9...v2.0.0
 [1.2.3]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.2...v1.2.3

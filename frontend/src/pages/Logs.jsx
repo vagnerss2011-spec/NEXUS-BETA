@@ -433,6 +433,12 @@ function PushRow({ atv, canDelete, onDelete, mostrarEmpresa }) {
 // ─────────────────── Modal de detalhe (Scheduler) ───────────────────
 function SchedulerDetalheModal({ detalhe, backupsLog, loadingDetalhe, onClose }) {
   const { Icon, color } = schedulerStatusBadge(detalhe)
+  // Separa falhas e sucessos. Falhas vêm SEMPRE no topo e expandidas — são
+  // o ponto de atenção da run. Sucessos ficam colapsados por padrão pra não
+  // empurrar as falhas pra fora da tela quando a run tem dezenas de devices.
+  const falhasList = backupsLog.filter(b => b.status === 'falha')
+  const sucessosList = backupsLog.filter(b => b.status === 'sucesso')
+  const [mostrarSucessos, setMostrarSucessos] = useState(falhasList.length === 0)
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-800 rounded-2xl border border-slate-700 w-full max-w-3xl max-h-[88vh] flex flex-col">
@@ -470,32 +476,80 @@ function SchedulerDetalheModal({ detalhe, backupsLog, loadingDetalhe, onClose })
           ) : backupsLog.length === 0 ? (
             <p className="text-slate-500 text-sm text-center py-4">Nenhum backup vinculado a esta execução</p>
           ) : (
-            <div>
-              <p className="text-sm font-medium text-slate-300 mb-2">Resultado por dispositivo</p>
-              <div className="space-y-2">
-                {backupsLog.map(b => (
-                  <div key={b.id}
-                    className={`rounded-lg border p-4 ${b.status === 'sucesso'
-                      ? 'border-emerald-700/50 bg-emerald-900/10'
-                      : 'border-red-700/50 bg-red-900/10'}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      {b.status === 'sucesso'
-                        ? <CheckCircle size={14} className="text-emerald-400 shrink-0" />
-                        : <XCircle size={14} className="text-red-400 shrink-0" />}
-                      <span className="font-medium text-white text-sm">
-                        {b.device?.nome ?? `Device #${b.device_id}`}
-                      </span>
-                      <span className="text-xs text-slate-400 font-mono">{b.device?.ip}</span>
-                      <span className="text-xs text-slate-500 capitalize">{b.device?.fabricante}</span>
-                    </div>
-                    {b.status === 'falha' && b.erro && (
-                      <pre className="mt-2 bg-slate-900 rounded p-3 text-xs text-red-300 whitespace-pre-wrap break-all font-mono leading-relaxed max-h-40 overflow-auto">
-                        {b.erro}
-                      </pre>
-                    )}
+            <div className="space-y-4">
+              {/* Falhas — sempre expandidas, destaque vermelho. São o ponto
+                  de atenção da run; precisam aparecer antes dos sucessos. */}
+              {falhasList.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <XCircle size={14} className="text-red-400" />
+                    <p className="text-sm font-medium text-red-300">
+                      {falhasList.length} falha{falhasList.length !== 1 ? 's' : ''} — requer atenção
+                    </p>
                   </div>
-                ))}
-              </div>
+                  <div className="space-y-2">
+                    {falhasList.map(b => (
+                      <div key={b.id}
+                        className="rounded-lg border border-red-700/50 bg-red-900/10 p-4">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <XCircle size={14} className="text-red-400 shrink-0" />
+                          <span className="font-medium text-white text-sm">
+                            {b.device?.nome ?? `Device #${b.device_id}`}
+                          </span>
+                          <span className="text-xs text-slate-400 font-mono">{b.device?.ip}</span>
+                          <span className="text-xs text-slate-500 capitalize">{b.device?.fabricante}</span>
+                        </div>
+                        {b.erro ? (
+                          <pre className="mt-2 bg-slate-900 rounded p-3 text-xs text-red-300 whitespace-pre-wrap break-all font-mono leading-relaxed max-h-40 overflow-auto">
+                            {b.erro}
+                          </pre>
+                        ) : (
+                          <p className="mt-2 text-xs text-red-300/70 italic">
+                            (sem detalhe de erro registrado)
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sucessos — colapsável. Quando há falhas, fica fechado por
+                  default; quando todos são sucesso, abre direto. */}
+              {sucessosList.length > 0 && (
+                <div>
+                  <button
+                    onClick={() => setMostrarSucessos(v => !v)}
+                    className="flex items-center gap-2 w-full text-left hover:bg-slate-700/30 -mx-2 px-2 py-1.5 rounded transition-colors"
+                  >
+                    <CheckCircle size={14} className="text-emerald-400" />
+                    <span className="text-sm font-medium text-emerald-300">
+                      {sucessosList.length} sucesso{sucessosList.length !== 1 ? 's' : ''}
+                    </span>
+                    <ChevronRight
+                      size={14}
+                      className={`text-slate-500 ml-auto transition-transform ${mostrarSucessos ? 'rotate-90' : ''}`}
+                    />
+                  </button>
+                  {mostrarSucessos && (
+                    <div className="space-y-2 mt-2">
+                      {sucessosList.map(b => (
+                        <div key={b.id}
+                          className="rounded-lg border border-emerald-700/50 bg-emerald-900/10 p-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <CheckCircle size={14} className="text-emerald-400 shrink-0" />
+                            <span className="font-medium text-white text-sm">
+                              {b.device?.nome ?? `Device #${b.device_id}`}
+                            </span>
+                            <span className="text-xs text-slate-400 font-mono">{b.device?.ip}</span>
+                            <span className="text-xs text-slate-500 capitalize">{b.device?.fabricante}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

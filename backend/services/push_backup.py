@@ -49,11 +49,19 @@ def processar_upload(device: Device, conteudo: str, ip: str | None, tamanho: int
     # Dedupe diário só pra devices não-UNM2000. UNM2000 envia múltiplos arquivos
     # distintos por dia (banco próprio + uma OLT cada arquivo) — dedupar
     # apagaria os arquivos anteriores e perderia tudo menos o último.
+    #
+    # IMPORTANTE: dedupe substitui APENAS sucessos do dia. FALHAS ficam preservadas
+    # — são dados de diagnóstico valiosos (timeout, FK, auth, etc.) que admin
+    # precisa enxergar mesmo quando depois um push manual entregou um sucesso
+    # do mesmo device no mesmo dia. Bug original: dedupe deletava falhas do
+    # scheduler quando um push posterior chegava, fazendo o contador
+    # log_scheduler.falhas mostrar N>0 mas nenhum row aparecer no modal.
     if device.tipo is None or device.tipo.value != "unm2000":
         db.execute(
             delete(Backup).where(
                 Backup.device_id == device.id,
                 Backup.criado_em >= inicio_dia,
+                Backup.status == "sucesso",
             )
         )
 
