@@ -757,3 +757,15 @@ async def iniciar_scheduler():
         id=DB_EXPORT_REMOTE_JOB_ID,
     )
     scheduler.start()
+    # Log explícito do próximo agendamento — útil pra verificar pós-restart
+    # ou pós-mudança de horário no painel. Usa WARNING pra escapar do filtro
+    # default do uvicorn (suprime INFO de loggers não-uvicorn).
+    job_backup = scheduler.get_job("backup_diario")
+    job_export = scheduler.get_job(DB_EXPORT_JOB_ID)
+    job_export_remoto = scheduler.get_job(DB_EXPORT_REMOTE_JOB_ID)
+    log.warning(
+        "SCHEDULER iniciado: backup_diario next=%s · db_export next=%s · db_export_remoto next=%s",
+        job_backup.next_run_time if job_backup else "N/A",
+        job_export.next_run_time if job_export else "N/A",
+        job_export_remoto.next_run_time if job_export_remoto else "N/A",
+    )
