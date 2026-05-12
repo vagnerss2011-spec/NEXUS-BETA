@@ -15,6 +15,90 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.0.0 =====
+  {
+    data: '2026-05-11',
+    tipo: 'novidade',
+    icone: 'ShieldCheck',
+    categoria: 'Segurança',
+    titulo: 'Backup criptografado do banco (.nxbak)',
+    descricao:
+      'Todo dia o sistema gera um arquivo criptografado com TODOS os backups armazenados — pra recuperar mesmo se o servidor queimar ou corromper. ' +
+      'Uma vez por semana esse arquivo pode ser enviado pra uma "nuvem de segurança" externa (servidor SFTP ou FTP de sua escolha). ' +
+      'O arquivo só abre numa ferramenta específica que conhece o formato + a chave Fernet que você guarda em local separado.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'melhoria',
+    icone: 'Cpu',
+    categoria: 'Performance',
+    titulo: 'Backup paralelo com auto-ajuste',
+    descricao:
+      'O backup diário das 02:00 agora coleta múltiplos equipamentos ao mesmo tempo em vez de um por vez. ' +
+      'O sistema mede CPU e memória continuamente e ajusta sozinho quantos rodam em paralelo — começa devagar, acelera quando vê que aguenta e diminui se notar que está sobrecarregado. ' +
+      'Resultado: backup de muitos devices termina mais rápido, sem risco de travar o servidor.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'melhoria',
+    icone: 'Clock',
+    categoria: 'Performance',
+    titulo: 'Pausa adaptativa entre coletas',
+    descricao:
+      'Entre uma coleta e a próxima, o sistema espera um tempo proporcional à duração da anterior — backups longos ganham mais pausa antes do próximo começar. ' +
+      'Evita congestionamento e dá tempo do equipamento "respirar" entre comandos. Configurável em Configurações.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'melhoria',
+    icone: 'AlertTriangle',
+    categoria: 'Confiabilidade',
+    titulo: 'Detecção de picos e backups encolhidos',
+    descricao:
+      'Se um equipamento de repente leva muito mais tempo que de costume pra fazer backup, o sistema avisa por Telegram e marca no log. ' +
+      'Mesmo aviso quando o backup vem com tamanho muito menor que o anterior (pode estar truncado ou corrompido). ' +
+      'Ajuda a pegar problema cedo, antes que vire perda de dado.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'novidade',
+    icone: 'Hand',
+    categoria: 'Dispositivos',
+    titulo: 'Backup somente manual em equipamentos específicos',
+    descricao:
+      'Marca a checkbox "Somente backup manual" no cadastro de um dispositivo e ele para de entrar no agendamento automático diário. ' +
+      'Útil pra equipamentos de lab/teste que você só quer coletar quando clicar no botão. A retenção de 7 backups continua valendo normalmente.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'novidade',
+    icone: 'ArrowDownUp',
+    categoria: 'Interface',
+    titulo: 'Ordenação clicável na tabela de Dispositivos',
+    descricao:
+      'Agora você pode clicar em qualquer coluna da tabela de Dispositivos (ID, Nome, IP, Tipo, Fabricante, Protocolo, Ativo, Último backup) pra ordenar por aquela coluna. ' +
+      'Clicar de novo inverte a direção. IPs são ordenados naturalmente (192.168.1.2 antes de 192.168.1.10) e IPv6 sempre vai pro fim.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'novidade',
+    icone: 'Trash2',
+    categoria: 'Backups',
+    titulo: 'Excluir todos os backups com falha de uma vez',
+    descricao:
+      'Botão novo na página Backups que apaga todos os backups com status "falha" do seu escopo. ' +
+      'Útil pra limpar a lista depois de uma queda de internet que deixou dezenas de devices com erro. Backups bem-sucedidos não são afetados.',
+  },
+  {
+    data: '2026-05-11',
+    tipo: 'novidade',
+    icone: 'Megaphone',
+    categoria: 'Interface',
+    titulo: 'Página Novidades no menu',
+    descricao:
+      'Este menu novo onde você está lendo agora. Resumo amigável de tudo o que muda no NEXUS BACKUP — sem precisar olhar o CHANGELOG técnico do código.',
+  },
+
   // ===== Maio/2026 — Mikrotik via API =====
   {
     data: '2026-05-11',

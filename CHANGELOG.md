@@ -12,6 +12,170 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.0.0] - 2026-05-11
+
+Major release consolidando o ciclo iniciado pós-v1.4.9. Mudanças significativas
+no scheduler diário (paralelismo adaptativo + delay AIMD), nova feature de
+segurança em profundidade (backup criptografado do banco em `.nxbak`), e
+melhorias de UI espalhadas por várias páginas. Banco evolui com migrations
+idempotentes — instância existente sobe direto sem intervenção manual além
+de gerar e adicionar `DB_EXPORT_KEY` no `.env`.
+
+### Por que MAJOR
+
+Critérios de bump documentados na política deste arquivo:
+
+- **Variável obrigatória nova no `.env`** — `DB_EXPORT_KEY` é necessária pra
+  feature de export do banco funcionar. Sem ela o painel mostra aviso e o job
+  diário não roda. Tecnicamente é "obrigatória" pra usar a feature, opcional
+  pra subir a app.
+- **Comportamento do scheduler mudou substancialmente** — antes era sequencial
+  puro 1 device por vez; agora é paralelo adaptativo com 2 pools e telemetria
+  psutil. Operadores que monitoram a janela noturna podem estranhar o
+  comportamento novo.
+- **`.nxbak` é formato proprietário versionado** — `format_version=0x01`
+  introduzido aqui; futuras mudanças do layout binário vão exigir nova major.
+
+### Adicionado
+
+**Backup criptografado do banco (`.nxbak`)**
+
+- Snapshot diário (default 03:30) com TODOS os backups armazenados, num arquivo
+  binário com magic header `NEXUSBACKUPv200\n`, payload comprimido (gzip nível
+  9) e criptografado (Fernet com `DB_EXPORT_KEY` dedicada — separada da
+  `ENCRYPTION_KEY` por defesa em profundidade).
+- Retenção 7 arquivos (igual aos backups normais).
+- Upload semanal opcional pra "nuvem de segurança" externa via SFTP (paramiko)
+  ou FTP (stdlib `ftplib`), configurável: host/porta/user/senha/path/dia/hora.
+- Audit + alerta Telegram (categoria `falha_backup`) quando export ou upload falham.
+- 3 endpoints novos: `GET/PUT /api/settings/db-export`, `POST .../run-now`,
+  `POST .../upload-now`.
+- UI: novo card "Export do Banco (.nxbak)" em Settings (admin master).
+- Formato documentado em [docs/NXBAK_FORMAT.md](docs/NXBAK_FORMAT.md) — spec completa pra implementar
+  a ferramenta externa de leitura (em projeto separado).
+
+**Paralelismo adaptativo no scheduler diário**
+
+- 2 pools independentes de workers: **API** (cap default 4) e **SSH/Telnet**
+  (cap default 2). Pools separados porque API binária é leve;
+  Paramiko/Netmiko são pesados (1 thread + socket por sessão).
+- Algoritmo **AIMD** (Additive Increase Multiplicative Decrease, inspirado em
+  TCP): +1 worker no pool após 3 sucessos consecutivos sem stress;
+  `target //= 2` (mínimo 1) quando CPU média > limite OU RAM > limite.
+- Telemetria via `psutil` em task asyncio paralela: sample a cada 5s, média
+  móvel de 60s. Detecta CPU/RAM acima dos limites (defaults 80%/80%) e dispara
+  corte imediato dos pools.
+- Hard cap absoluto = 8 workers por pool (mesmo se admin tentar configurar
+  mais, é truncado no banco). Protege contra estouro de sockets/threads.
+- `run_backup()` agora roda via `asyncio.to_thread()` — paralelismo REAL do
+  Paramiko/Netmiko/librouteros (antes bloqueava o event loop mesmo em
+  "sequencial sync").
+- Cada worker abre sua própria session SQLAlchemy (sessions async não toleram
+  uso compartilhado entre coroutines concorrentes).
+- Auto OFF (`backup_workers_auto=false`): trava em 1 worker, comportamento
+  legado pré-v2.x.
+
+**Delay adaptativo entre coletas (parte do scheduler v2 absorvido aqui)**
+
+- Após cada device, scheduler espera `max(delay_min, fator × duração_anterior)`
+  antes do próximo. Defaults: 10s de piso, fator 0.2 (backup de 5min → 60s
+  de pausa, backup de 30s → fica no piso).
+- Detecção de pico: duração > `fator_pico × média histórica` (últimos 10
+  backups do mesmo device) dispara `WARNING` em `docker logs` + alerta
+  Telegram. Default `fator_pico=3.0`.
+- Detecção de redução suspeita de tamanho: backup novo < 50% do último
+  sucesso (mesma extensão de `nome_arquivo`, replicando regra do frontend) —
+  registra alerta sem converter em falha (config pode ter genuinamente
+  encolhido).
+- `Backup.duracao_segundos` (coluna nova) preenchido tanto pelo scheduler
+  quanto pelo botão "Executar backup" — alimenta a média histórica usada
+  na detecção de pico.
+
+**Página Novidades (changelog amigável)**
+
+- Novo item no menu lateral "Novidades" (ícone Sparkles, visível a todos
+  os roles).
+- Página lista mudanças em linguagem leiga, agrupadas por tipo
+  (novidade/melhoria/correção) com chips de filtro e contadores.
+- Fonte de dados estática em [frontend/src/data/changelog.js](frontend/src/data/changelog.js) — pra adicionar
+  entrada nova, é só empurrar no topo do array.
+- Complementa o `CHANGELOG.md` técnico (que continua sendo a fonte detalhada
+  pro time de dev).
+
+**Ordenação clicável da tabela de Dispositivos**
+
+- Cabeçalhos (`ID`, `Nome`, `IP`, `Tipo`, `Fabricante`, `Protocolo`, `Ativo`,
+  `Último backup`) ficam clicáveis com seta ↑/↓ visual. Click na coluna ativa
+  inverte direção; click em coluna nova começa em "desc" pra ID/Último backup
+  e "asc" pras textuais.
+- Default = ID descendente (último cadastrado no topo) — facilita gestão
+  diária. Botão "Limpar" reseta filtros + ordenação.
+- Ordenação de IP é numérica por octeto (192.168.1.2 vem antes de 192.168.1.10),
+  não lexicográfica. IPv6 vai sempre pro fim, independente da direção.
+- Texto usa `localeCompare(pt-BR, numeric: true)` — "R2" antes de "R10",
+  dígitos antes de letras.
+
+**Checkbox "Somente backup manual" no cadastro de dispositivos**
+
+- Novo campo `Device.backup_manual_apenas` (default `false`). Quando `true`:
+  - Scheduler diário PULA o device (filtro adicionado em `executar_backups`).
+  - Botão "Executar backup" no painel continua funcionando normal.
+  - Retenção (`BACKUP_RETENTION_DAYS`) continua valendo — mesmo em manual
+    o histórico fica limitado.
+- UI: checkbox no modal Novo/Editar device, dentro da seção de protocolo
+  (só aparece pra SSH/Telnet/API — push não tem "rodar manual"). Badge
+  amber "manual" ao lado do nome na tabela sinaliza que o device está
+  fora do agendamento.
+
+**Botão "Excluir falhas" em Backups**
+
+- Apaga em massa todos os backups com `status='falha'` no escopo do usuário.
+  Útil pra limpeza após queda de internet sistêmica que deixa dezenas de
+  devices falhos por dias.
+- Endpoint novo `DELETE /api/backups/?status=falha` (também aceita
+  `?status=sucesso` se admin quiser). Admin master pode passar `empresa_id`
+  opcional pra filtrar; admin_empresa fica restrito automaticamente à
+  própria empresa.
+- Audit consolidado: 1 evento `backup_removido` com contagem total
+  (em vez de N eventos, evita poluir).
+- Visível só pra `admin` e `admin_empresa`, e somente quando há pelo menos
+  1 falha no escopo do usuário.
+
+### Mudado
+
+- **Scheduler `_backup_device`** retorna agora `tuple[ok, erro, duracao_seg,
+  alerta_tipo, alerta_msg]` em vez de só `tuple[ok, erro]`. Chamadas externas
+  ao scheduler service não existem fora dele, mas se alguém customizou
+  internamente vai precisar adaptar.
+- **`LogScheduler`** ganha 7 colunas novas: `duracao_total_segundos`,
+  `duracao_media_segundos`, `picos_detectados`, `alertas_tamanho`,
+  `workers_max_atingido_api`, `workers_max_atingido_ssh`, `tempo_sob_stress_seg`.
+- **`Configuracao`** ganha 16 colunas novas (3 do delay v2 + 5 do paralelismo
+  + 13 do db-export).
+- **`Backup`** ganha coluna `duracao_segundos`.
+
+### Compatibilidade
+
+- Migrations idempotentes (`ADD COLUMN IF NOT EXISTS`) — instância existente
+  sobe direto sem rodar nada manual.
+- `DB_EXPORT_KEY` no `.env` é **opcional pra subir**, **obrigatória pra usar**
+  a feature de export. Sem ela, o card no painel mostra aviso explícito e o
+  job diário pula silenciosamente.
+- Devices/backups/logs existentes continuam funcionando sem mudança.
+- API endpoints existentes mantêm contrato — apenas novos endpoints adicionados.
+
+### Notas de operação
+
+- **Anotar a `DB_EXPORT_KEY` em local separado do servidor** (cofre digital,
+  password manager). Sem essa chave, os `.nxbak` ficam **irrecuperáveis** —
+  por design, é a defesa em profundidade que essa feature oferece.
+- Após primeira boot da v2.0.0, validar com botão "Exportar agora" em
+  Settings que o `.nxbak` é gerado corretamente.
+- O upload semanal pra nuvem de segurança fica OFF por default — admin
+  precisa configurar host/user/senha conscientemente antes de ligar.
+- Defaults do paralelismo (`api=4, ssh=2, cpu_lim=80, mem_lim=80`) são
+  conservadores. Validar 1-2 noites antes de subir caps.
+
 ## [1.4.9] - 2026-05-11
 
 ### Corrigido
@@ -362,7 +526,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.3...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.4.9...v2.0.0
 [1.2.3]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.2.0...v1.2.1

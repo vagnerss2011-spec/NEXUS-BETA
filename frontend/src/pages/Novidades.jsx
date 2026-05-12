@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   Sparkles, Wifi, Clock, Trash2, Terminal, Image, BellRing,
   ScrollText, Upload, Bell, Wrench, Bug, Megaphone,
+  ShieldCheck, Cpu, Hand, ArrowDownUp, AlertTriangle,
 } from 'lucide-react'
 import { CHANGELOG_ENTRIES } from '../data/changelog'
 
@@ -9,7 +10,8 @@ import { CHANGELOG_ENTRIES } from '../data/changelog'
 // Fica aqui (não no data/) pra não acoplar o arquivo de dados a JSX/imports.
 const ICONES = {
   Sparkles, Wifi, Clock, Trash2, Terminal, Image, BellRing,
-  ScrollText, Upload, Bell,
+  ScrollText, Upload, Bell, ShieldCheck, Cpu, Hand, ArrowDownUp,
+  AlertTriangle, Megaphone,
 }
 
 // Configuração visual por tipo. label aparece no chip e no badge da entrada;
