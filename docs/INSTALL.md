@@ -2,6 +2,8 @@
 
 Guia ponta-a-ponta pra subir uma instância nova. Pareado com [scripts/install-nexus-backup.sh](../scripts/install-nexus-backup.sh): o script cobre §4–§5; o restante (provisionamento, SSH, DNS, certbot, primeiro admin) é manual e está aqui.
 
+> **Atalho:** se você só precisa do passo-a-passo simples pra mover SSH pra 2288 e configurar deploy key do GitHub privado antes do install, ver [QUICKSTART.md](QUICKSTART.md).
+
 ---
 
 ## §1 — Pré-requisitos
