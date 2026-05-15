@@ -12,6 +12,34 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.1] - 2026-05-15
+
+### Corrigido
+
+- **Cleanup de arquivos `nexus-api-*.rsc` no Mikrotik não removia nada.**
+  Bug crítico re-detectado em prod (CRS328-Asa_Norte ID 52 da empresa Camon)
+  após o módulo Operações em massa ser deployado e o usuário rodar
+  `cleanup_orfaos` 2× — em ambas a UI reportou "10 arquivos removidos",
+  mas o `inventario` subsequente mostrou que o device continuava com 13%
+  de espaço livre (mesmo estado de antes). Causa raiz:
+  - `librouteros` retorna iterator preguiçoso — chamar `api("/file/remove",
+    ...)` sem `list()` cria o objeto Query mas NUNCA envia o comando pro
+    device. A função `_cleanup_orfaos_nexus` e a `_try_remove_file` em
+    `services/mikrotik_api.py` esqueceram do `list()` que outras chamadas
+    do mesmo arquivo já usam (existe inclusive um comentário em
+    `aplicar_config_padrao` documentando o mesmo bug de 2026-05-11 em
+    `/system/clock/set`).
+  - Impacto silencioso: a memória NAND dos Mikrotiks foi acumulando órfãos
+    de TODO Plano C (`/export file=tmp.rsc` + `/tool/fetch upload=yes`)
+    desde a v1.4.4 quando o Plano C foi introduzido. CRS328 chegou a 12
+    arquivos órfãos sem ninguém notar — 16 MB de NAND saturada faz o
+    `/export` falhar e leva ao "device acumula configs em 86% mas não
+    backupa mais".
+  - Fix: envolver `api("/file/remove", ...)` em `list()` nas duas funções.
+    Após esse hotfix, cleanup retorna número real de arquivos removidos
+    E o `_try_remove_file` no finally do Plano C funciona — fluxo de
+    backup por API não deixa mais lixo na NAND.
+
 ## [2.1.0] - 2026-05-15
 
 ### Adicionado

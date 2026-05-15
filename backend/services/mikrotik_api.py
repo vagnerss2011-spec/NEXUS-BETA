@@ -266,11 +266,17 @@ def _export_via_upload_ftp(api, device: Device) -> str:
 
 
 def _try_remove_file(api, nome: str) -> None:
-    """Remove arquivo do /file no Mikrotik silenciosamente."""
+    """Remove arquivo do /file no Mikrotik silenciosamente.
+
+    O list() é OBRIGATÓRIO — chamar api(...) sem consumir o iterator NÃO
+    envia o comando pra rede (bug do librouteros 3.4, validado em prod
+    2026-05-11 em /system/clock/set, e re-detectado 2026-05-15 quando
+    CRS328 acumulou 10+ nexus-api-*.rsc órfãos apesar deste código rodar).
+    """
     try:
         arq = _find_file(api, nome)
         if arq and ".id" in arq:
-            api("/file/remove", **{".id": arq[".id"]})
+            list(api("/file/remove", **{".id": arq[".id"]}))
     except Exception:
         log.exception("falha ao remover arquivo temp %s do device", nome)
 
@@ -295,7 +301,11 @@ def _cleanup_orfaos_nexus(api) -> int:
                 if not file_id:
                     continue
                 try:
-                    api("/file/remove", **{".id": file_id})
+                    # list() OBRIGATÓRIO — sem consumir o iterator do librouteros
+                    # o /file/remove não é enviado pra rede (mesmo bug do
+                    # _try_remove_file acima). Antes do fix, esta função
+                    # retornava "removidos > 0" mas os arquivos ficavam no device.
+                    list(api("/file/remove", **{".id": file_id}))
                     removidos += 1
                 except Exception:
                     log.warning("falha removendo orfao %s", name)
