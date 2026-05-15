@@ -12,6 +12,32 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.5] - 2026-05-15
+
+### Corrigido — `install-nexus-backup.sh`
+
+Achados em instalação real numa VM Debian 13 minimal. Sem essas correções, o operador precisa intervir manualmente em 3 pontos:
+
+- **`curl` não estava instalado** antes do pré-flight. Debian 13 minimal não traz curl por default. O pré-flight tentava `curl https://github.com` e `curl https://api.ipify.org`, falhando antes do passo 1 (que instalaria curl via apt).
+  - Fix: novo bloco "ensure-curl" que precede o pré-flight — checa `command -v curl` e roda `apt-get install -y curl ca-certificates` se faltar. Idempotente.
+
+- **Mensagem de erro do pré-flight DNS era pouco didática**. Quando `/etc/resolv.conf` está vazio, o script só dizia "DNS não consegue resolver" sem mostrar como corrigir.
+  - Fix: mensagem agora inclui o comando de correção rápida:
+    ```
+    echo 'nameserver 1.1.1.1' > /etc/resolv.conf
+    echo 'nameserver 8.8.8.8' >> /etc/resolv.conf
+    ```
+  - Também aponta que pra solução permanente o operador deve configurar DNS no
+    network manager (systemd-networkd, NetworkManager, etc.).
+
+- **UFW podia reportar enable com sucesso mas ficar `inactive (dead)`** após reboot em Debian 13 + nftables backend. O `ufw enable` retornava OK mas o serviço systemd não estava habilitado.
+  - Fix: sequência defensiva: `systemctl enable ufw` → `ufw enable` → `sleep 1` → pós-check de `ufw status` E `systemctl is-active ufw`. Se ainda inactive, mostra warning com comandos de remediação manual.
+
+### Notas técnicas
+
+- Backend/frontend de runtime **não mudaram**. Servidores existentes (Bandaa, Camon) não precisam redeploy.
+- Erro cosmético `Deleting nftables IPv4 rules ... delete table ip docker-bridges: No such file or directory` que aparece em alguns reboots do Docker em Trixie é conhecido upstream ([moby/moby#46714](https://github.com/moby/moby/issues/46714)) — Docker tenta limpar tabelas nft que já não existem. Não afeta funcionamento. Documentado na Wiki Troubleshooting.
+
 ## [2.1.4] - 2026-05-15
 
 ### Adicionado

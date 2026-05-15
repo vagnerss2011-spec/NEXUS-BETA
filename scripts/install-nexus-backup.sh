@@ -151,6 +151,17 @@ if ! ss -tlnp 2>/dev/null | grep -qE ':2288\b'; then
   [ "${ans:-n}" = "s" ] || exit 1
 fi
 
+# ───────────────────────── ensure curl + ca-certificates ─────────────────────────
+# O pré-flight a seguir usa `curl`, e Debian 13 minimal NÃO traz curl por default.
+# Sem isso, o pré-flight de HTTPS quebra antes de chegar no passo 1 (que instalaria curl
+# via apt). Esse bloco precede o pré-flight pra garantir a ferramenta básica.
+if ! command -v curl >/dev/null 2>&1; then
+  printf '\n%sInstalando curl + ca-certificates (necessário pro pré-flight)…%s\n' "$C_BOLD" "$C_RESET"
+  apt-get update -qq
+  apt-get install -y -qq curl ca-certificates >/dev/null
+  ok "curl instalado"
+fi
+
 # ───────────────────────── pré-flight de conectividade ─────────────────────────
 # Por que: melhor descobrir agora que algo crucial está fora do ar do que falhar
 # tarde no passo 3 (clone do repo). Cada check tem timeout curto pra não travar.
@@ -160,7 +171,12 @@ printf '\n%sPré-flight: testando conectividade…%s\n' "$C_BOLD" "$C_RESET"
 if getent ahosts github.com >/dev/null 2>&1; then
   ok "DNS resolve github.com"
 else
-  fail "DNS não consegue resolver github.com — confira /etc/resolv.conf e a rede"
+  fail "DNS não consegue resolver github.com. Confira /etc/resolv.conf — precisa ter
+  ao menos uma linha 'nameserver <IP>'. Se está vazio, corrige rápido com:
+      echo 'nameserver 1.1.1.1' > /etc/resolv.conf
+      echo 'nameserver 8.8.8.8' >> /etc/resolv.conf
+  E rode o script de novo. Pra solução permanente, configure DNS no seu network
+  manager (systemd-networkd, NetworkManager, /etc/network/interfaces, etc.)."
 fi
 
 # 2) HTTPS pra GitHub funciona (clone vai usar)
@@ -581,8 +597,22 @@ if confirm_step "UFW firewall (regras + enable)" \
   fi
 
   if ! ufw status | grep -q 'Status: active'; then
+    # Em Debian 13 Trixie com nftables backend, o ufw service precisa estar
+    # habilitado no systemd ANTES do `ufw enable` — senão o enable retorna OK
+    # mas o serviço fica `inactive (dead)` após reboot. Sequência defensiva:
+    systemctl enable ufw >/dev/null 2>&1 || true
     yes | ufw enable >/dev/null
-    ok "ufw enable"
+    sleep 1
+    # Pós-check explícito — `ufw enable` pode reportar sucesso mas o serviço
+    # acabar morto. Valida o estado real.
+    if ufw status | grep -q 'Status: active' && systemctl is-active --quiet ufw; then
+      ok "ufw enable + service active"
+    else
+      warn "UFW reportou enable mas não ficou active. Tente manualmente:"
+      warn "  systemctl enable --now ufw && ufw --force enable"
+      warn "Se persistir, verifique se nftables/iptables backend está OK:"
+      warn "  update-alternatives --display iptables  (espera-se iptables-nft)"
+    fi
   else
     skip "ufw já ativo"
   fi
