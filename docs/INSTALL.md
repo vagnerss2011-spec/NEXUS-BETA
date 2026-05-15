@@ -135,7 +135,9 @@ Cada passo emite uma das marcações:
 | `!` (amarelo) | Aviso — geralmente algo que precisa de atenção depois |
 | `✗` (vermelho) | Erro — script aborta com `set -euo pipefail` |
 
-O que ele faz, em ordem (8 passos):
+Antes dos passos, faz **pré-flight de conectividade**: testa DNS (`getent ahosts github.com`), HTTPS pra `github.com` e detecta IP público via `api.ipify.org`. Falha cedo com mensagem clara se algo crítico estiver fora. O IP detectado é reaproveitado no passo 8 pra preencher `FTP_MASQUERADE_ADDRESS` automaticamente.
+
+O que ele faz, em ordem (9 passos):
 1. **Sistema base** — locale `pt_BR.UTF-8` + timezone `America/Sao_Paulo` + apt deps (git, ufw, fail2ban, chrony, etc.)
 2. **Docker Engine** — repo oficial Docker + `/etc/docker/daemon.json` com `bip 10.17.0.1/24` + pool `10.18.0.0/16` + IPv6
 3. **Clone do repo** — em `/root/NEXUS-BETA` na tag mais recente. **Default: SSH com deploy key** (ver §3.5 abaixo). Pra HTTPS público use `REPO_URL=https://...`
@@ -143,7 +145,8 @@ O que ele faz, em ordem (8 passos):
 5. **Chrony NTP** — `allow` RFC1918+RFC6598 + ratelimit. Faixas adicionais via env var `NEXUS_EXTRA_CIDRS=cidr1,cidr2,...`
 6. **Fail2ban** — action `docker-allports` (com bloco `[Init]` definindo `iptables=/usr/sbin/iptables` — necessário em Trixie), filter+jail `nexus-ftp` apontando pro log do passo 4
 7. **UFW** — allow 2288/80/443/21/22/69/30000-30099 + 123/udp pra RFC1918+RFC6598+`NEXUS_EXTRA_CIDRS`, depois `ufw enable`
-8. **`.env`** — secrets gerados (SECRET_KEY/ENCRYPTION_KEY/POSTGRES_PASSWORD via openssl) + 3 placeholders pra você editar
+8. **`.env`** — secrets gerados (`SECRET_KEY`, `ENCRYPTION_KEY`, `DB_EXPORT_KEY` v2.0.0+, `POSTGRES_PASSWORD` via openssl) + `FTP_MASQUERADE_ADDRESS` auto-preenchido com o IP público detectado + placeholders editáveis (`DOMAIN`, `CERTBOT_EMAIL`, opcional `GITHUB_TOKEN`). Se `.env` já existir, faz backup em `.env.bak.<timestamp>` e NÃO sobrescreve.
+9. **Cron pg-backup.sh** — OPCIONAL: instala `/etc/cron.d/nexus-pg-backup` rodando `pg_dump` todo dia às 03:30, retendo 14 dias em `/var/backups/nexus-postgres/`. Use quando a VM **não** tem snapshot do hipervisor cobrindo o disco.
 
 ### Variáveis de ambiente opcionais
 
@@ -181,15 +184,36 @@ cat /root/.ssh/nexus_deploy_key.pub
 nano /root/NEXUS-BETA/.env
 ```
 
-Os 3 campos com `❗` no comentário precisam ser preenchidos:
+Desde a v2.1.4 o script auto-preenche `FTP_MASQUERADE_ADDRESS` com o IP público detectado via `api.ipify.org`. Os 2 campos abaixo continuam sendo obrigatórios:
 
 | Campo | O que colocar |
 |---|---|
 | `DOMAIN` | O FQDN público que aponta pra essa VM (ex.: `backup.cliente.com.br`) |
 | `CERTBOT_EMAIL` | E-mail real (Let's Encrypt manda alerta de expiração) |
-| `FTP_MASQUERADE_ADDRESS` | IP que os clientes usam pra alcançar essa VM (público se via NAT, privado se via VPN). **Sem isso, FTP push vem com 0 bytes.** |
 
-Os outros campos (`SECRET_KEY`, `ENCRYPTION_KEY`, `POSTGRES_PASSWORD`) já vieram preenchidos. **Faça backup do `.env` num cofre offline** — se perder `ENCRYPTION_KEY`, todas as senhas SSH salvas no banco viram lixo.
+E **revise** o que foi auto-detectado:
+
+| Campo auto | Quando editar manualmente |
+|---|---|
+| `FTP_MASQUERADE_ADDRESS` | Se os clientes acessam por outro IP (VPN, NAT específico, IP secundário). Sem isso correto, **FTP push vem com 0 bytes.** |
+
+Os campos abaixo já vieram gerados — **NÃO troque depois**:
+
+| Campo | O que é |
+|---|---|
+| `SECRET_KEY` | Assina os JWT do painel (rotacionar invalida sessões) |
+| `ENCRYPTION_KEY` | Cifra senhas SSH dos devices no banco. Se trocar, **todas as senhas viram lixo** |
+| `DB_EXPORT_KEY` | Cifra o `.nxbak` (snapshot diário, v2.0.0+). Se perder, arquivos `.nxbak` são irrecuperáveis |
+| `POSTGRES_PASSWORD` | Auth do user do banco — fixado quando o container db inicializou pela primeira vez |
+
+E os opcionais (vazio = feature desabilitada):
+
+| Campo | Pra que serve |
+|---|---|
+| `GITHUB_TOKEN` | PAT do GitHub pra ativar banner "v2.X.Y disponível" no painel. Crie em [github.com/settings/tokens](https://github.com/settings/tokens) com scope `repo` read |
+| `GITHUB_REPO` | Repo no formato `owner/repo`. Default já aponta pro repo oficial |
+
+> **Faça backup do `.env` num cofre offline.** Guarde `ENCRYPTION_KEY` e `DB_EXPORT_KEY` em local **separado** do servidor — sem elas o histórico criptografado vira lixo.
 
 ---
 
@@ -327,12 +351,22 @@ docker compose up -d --build
 
 ### Backup contínuo do DB (cron)
 
-Já tem `scripts/pg-backup.sh` pra isso — habilitar via cron:
+Desde a v2.1.4 o passo 9 do `install-nexus-backup.sh` já oferece instalar a cron automaticamente. Se pulou na hora do install, dá pra instalar avulso:
 
 ```bash
-crontab -e
-# Diário às 03:00, retém 14 dias
-0 3 * * * /root/NEXUS-BETA/scripts/pg-backup.sh >> /var/log/nexus-pg-backup.log 2>&1
+sudo tee /etc/cron.d/nexus-pg-backup > /dev/null <<'EOF'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 3 * * * root cd /root/NEXUS-BETA && ./scripts/pg-backup.sh >> /var/log/nexus-pg-backup.log 2>&1
+EOF
+sudo chmod 644 /etc/cron.d/nexus-pg-backup
+sudo touch /var/log/nexus-pg-backup.log
+```
+
+Roda diário às 03:30, retém 14 dias em `/var/backups/nexus-postgres/`. Restore:
+
+```bash
+docker compose exec -T db pg_restore -U $POSTGRES_USER -d $POSTGRES_DB --clean --if-exists < <dump_file>
 ```
 
 ### Reiniciar o stack após mudança no daemon.json

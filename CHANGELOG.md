@@ -12,6 +12,22 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.4] - 2026-05-15
+
+### Adicionado
+
+- **`install-nexus-backup.sh` ganhou pré-flight de conectividade + passo 9 opcional + auto-detecção de IP público.**
+  - Pré-flight (antes dos 9 passos): testa `getent ahosts github.com`, `curl https://github.com` e detecta IP público via `https://api.ipify.org`. Falha cedo com mensagem clara se algo crítico estiver fora — em vez de só descobrir no passo 3 (clone) que a rede não tá pronta.
+  - **`DB_EXPORT_KEY` (Fernet) agora é gerado automaticamente** no `.env` — antes faltava, fazendo o export `.nxbak` (feature v2.0.0) ficar desabilitado por default em toda instância nova. Documentação completa do significado no comentário inline do `.env`.
+  - **`FTP_MASQUERADE_ADDRESS` auto-preenchido** com o IP público detectado no pré-flight. Resolve o erro de instalação mais comum ("FTP push chega com 0 bytes" → causa: campo vazio). Quando os clientes acessam por outro IP (VPN/NAT), o admin sobrescreve manualmente — comentário no `.env` deixa claro quando revisar.
+  - **`GITHUB_TOKEN` + `GITHUB_REPO` incluídos no `.env`** como opcionais (vazio = banner de update desabilitado). Antes o admin precisava saber que existiam e adicionar manualmente.
+  - **Backup automático do `.env` existente** em `.env.bak.<timestamp>` quando o script é re-executado numa instância que já tem `.env`. Mantém o comportamento de NÃO sobrescrever, mas garante recovery se alguém editou errado.
+  - **Passo 9 (opcional)**: instala `/etc/cron.d/nexus-pg-backup` agendando `pg_dump` diário às 03:30 com retenção de 14 dias. Antes era documentado no INSTALL.md como passo manual; agora o script já oferece.
+
+### Notas técnicas
+
+- Backend e frontend de runtime não mudaram. Servidores existentes (backup.bandaa.net.br, nexus.camon.net.br) **não precisam redeploy** — esta tag só beneficia instâncias novas. O bump existe pra alinhar o INSTALL.md (que referencia "desde a v2.1.4") com uma tag no Git.
+
 ## [2.1.3] - 2026-05-15
 
 ### Corrigido

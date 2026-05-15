@@ -25,7 +25,11 @@
 #      github.com/<owner>/<repo>/settings/keys ANTES do passo 3 (clone).
 #      → este script gera a key se não existir e te dá a public key pra colar.
 #
-# O que o script faz (em 8 passos, idempotente — pode rodar várias vezes):
+# Antes dos passos, faz pré-flight de conectividade (DNS, github.com,
+# api.ipify.org pra detectar IP público). Falha cedo se algo crítico
+# estiver fora.
+#
+# O que o script faz (em 9 passos, idempotente — pode rodar várias vezes):
 #   [1] Sistema base       — locale pt_BR.UTF-8, timezone, apt deps
 #   [2] Docker Engine      — repo oficial + daemon.json (bip 10.17/24, pool 10.18/16)
 #                            → passo 2 cria a chain DOCKER-USER, dep do fail2ban
@@ -36,10 +40,13 @@
 #   [6] Fail2ban           — action docker-allports + filter+jail nexus-ftp
 #                            → roda DEPOIS dos passos 2 e 4 pra ter chain + log file
 #   [7] UFW firewall       — regras (2288 SSH, 80/443, 21/22/69/30000-30099, 123/udp)
-#   [8] Gera .env          — secrets aleatórios + placeholders pra você editar
+#   [8] Gera .env          — secrets gerados (SECRET_KEY, ENCRYPTION_KEY,
+#                            DB_EXPORT_KEY, POSTGRES_PASSWORD) + auto FTP_MASQUERADE
+#                            via api.ipify.org. Faz backup do .env antigo se existir.
+#   [9] Cron pg-backup     — OPCIONAL: agenda pg_dump diário 03:30 (retém 14 dias)
 #
 # O que ainda é manual (depois deste script — ver docs/INSTALL.md):
-#   - Editar .env: DOMAIN, CERTBOT_EMAIL, FTP_MASQUERADE_ADDRESS
+#   - Editar .env: DOMAIN, CERTBOT_EMAIL (e revisar FTP_MASQUERADE_ADDRESS)
 #   - ./init-letsencrypt.sh (pega certificado real)
 #   - docker compose up -d
 #   - Criar primeiro usuário admin (via Python no container — ver INSTALL.md §8)
@@ -72,7 +79,11 @@ skip()  { printf '  %s·%s %s (já feito)\n' "$C_GREY" "$C_RESET" "$1"; }
 note()  { printf '  %s%s%s\n' "$C_GREY" "$1" "$C_RESET"; }
 
 STEP_NUM=0
-STEP_TOTAL=8
+STEP_TOTAL=9
+
+# IP público detectado no pré-flight — preenchido em FTP_MASQUERADE_ADDRESS
+# se o usuário não definir manualmente. Vazio se a detecção falhar.
+DETECTED_PUBLIC_IP=""
 
 # confirm_step "Título do passo" "descrição multilinha do que faz"
 # Retorna 0 (executar) ou 1 (pular). No modo auto sempre retorna 0.
@@ -138,6 +149,34 @@ if ! ss -tlnp 2>/dev/null | grep -qE ':2288\b'; then
   printf '  Continuar mesmo assim? [s/N]: '
   read -r ans </dev/tty
   [ "${ans:-n}" = "s" ] || exit 1
+fi
+
+# ───────────────────────── pré-flight de conectividade ─────────────────────────
+# Por que: melhor descobrir agora que algo crucial está fora do ar do que falhar
+# tarde no passo 3 (clone do repo). Cada check tem timeout curto pra não travar.
+printf '\n%sPré-flight: testando conectividade…%s\n' "$C_BOLD" "$C_RESET"
+
+# 1) DNS resolve algo público
+if getent ahosts github.com >/dev/null 2>&1; then
+  ok "DNS resolve github.com"
+else
+  fail "DNS não consegue resolver github.com — confira /etc/resolv.conf e a rede"
+fi
+
+# 2) HTTPS pra GitHub funciona (clone vai usar)
+if curl -fsSL --max-time 10 -o /dev/null https://github.com 2>/dev/null; then
+  ok "HTTPS pra github.com OK"
+else
+  fail "Não consegui curl https://github.com — confira proxy/firewall de borda"
+fi
+
+# 3) HTTPS pra api.ipify.org (vai detectar IP público pra FTP_MASQUERADE_ADDRESS)
+if DETECTED_PUBLIC_IP="$(curl -fsSL --max-time 10 https://api.ipify.org 2>/dev/null)" \
+   && [[ "$DETECTED_PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  ok "IP público detectado: $DETECTED_PUBLIC_IP"
+else
+  DETECTED_PUBLIC_IP=""
+  warn "Não consegui detectar IP público (api.ipify.org) — vou deixar FTP_MASQUERADE_ADDRESS vazio pra você preencher"
 fi
 
 # REPO_URL: default SSH (deploy key). Override pra HTTPS se repo for público.
@@ -553,28 +592,46 @@ fi
 if confirm_step "Gera .env com secrets aleatórios + placeholders" \
 "  Cria $REPO_DIR/.env com:
     - SECRET_KEY (openssl rand -hex 64)             ← gerado
-    - ENCRYPTION_KEY (Fernet base64 url-safe)       ← gerado via openssl
+    - ENCRYPTION_KEY (Fernet base64 url-safe)       ← gerado
+    - DB_EXPORT_KEY (Fernet base64 url-safe)        ← gerado (v2.0.0 .nxbak)
     - POSTGRES_PASSWORD (32 chars alfanuméricos)    ← gerado
-    - DOMAIN, CERTBOT_EMAIL, FTP_MASQUERADE_ADDRESS ← VOCÊ EDITA
-  chmod 600 .env. Se já existir, NÃO sobrescreve (preserva secrets
-  antigas — perder ENCRYPTION_KEY = senhas SSH no banco viram lixo).
-
-  Geração da ENCRYPTION_KEY:
-    openssl rand -base64 32 | tr '+/' '-_'
-  É exatamente o formato que cryptography.fernet.Fernet espera —
-  32 bytes random encoded em base64 url-safe."; then
+    - FTP_MASQUERADE_ADDRESS                        ← auto IP público${DETECTED_PUBLIC_IP:+ ($DETECTED_PUBLIC_IP)}
+    - DOMAIN, CERTBOT_EMAIL                         ← VOCÊ EDITA
+    - GITHUB_TOKEN/GITHUB_REPO                      ← opcional (banner update)
+  chmod 600 .env. Se já existir, faz backup em .env.bak.<ts> e NÃO
+  sobrescreve (preserva secrets antigas — perder ENCRYPTION_KEY ou
+  DB_EXPORT_KEY = dados criptografados viram lixo)."; then
 
   cd "$REPO_DIR" 2>/dev/null || fail "REPO_DIR $REPO_DIR não existe"
 
-  if [ ! -f .env ]; then
+  if [ -f .env ]; then
+    # Backup com timestamp antes de pular — bom pra recovery se alguém editou
+    # errado e quer voltar pra última versão automática.
+    cp .env ".env.bak.$(date +%Y%m%d-%H%M%S)"
+    skip ".env (já existe — backup salvo em .env.bak.*, NÃO sobrescrevo)"
+  else
     SECRET_KEY="$(openssl rand -hex 64)"
     # Fernet expects 32 bytes URL-safe base64 — equivalent to Fernet.generate_key()
     ENCRYPTION_KEY="$(openssl rand -base64 32 | tr '+/' '-_')"
+    DB_EXPORT_KEY="$(openssl rand -base64 32 | tr '+/' '-_')"
     POSTGRES_PASSWORD="$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)"
+
+    # FTP_MASQUERADE_ADDRESS: auto-preenche com IP público detectado no pré-flight.
+    # Se a detecção falhou (DETECTED_PUBLIC_IP vazio), deixa vazio pra editar manual.
+    # Cenários onde o auto pode estar errado e precisa correção manual:
+    #   - VM atrás de NAT com VPN: clientes acessam pelo IP da VPN, não pelo público
+    #   - Múltiplos IPs públicos no servidor: pode pegar o "errado"
+    if [ -n "$DETECTED_PUBLIC_IP" ]; then
+      FTP_MASQ_VALUE="$DETECTED_PUBLIC_IP"
+      FTP_MASQ_NOTE="# Auto-detectado via api.ipify.org no install. Mude se clientes acessam por outro IP (VPN/NAT)."
+    else
+      FTP_MASQ_VALUE=""
+      FTP_MASQ_NOTE="# [!] Detecção automática falhou — preencher manualmente com o IP que os clientes usam."
+    fi
 
     cat > .env <<EOF
 # Gerado por install-nexus-backup.sh em $(date -Iseconds)
-# Edite os 3 campos marcados com [!] ANTES de rodar init-letsencrypt.sh.
+# Edite os campos marcados com [!] ANTES de rodar init-letsencrypt.sh.
 
 # === Domínio público + Let's Encrypt ===
 # [!] DNS deste DOMAIN deve resolver pra IP público deste servidor antes do certbot
@@ -590,25 +647,74 @@ POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 SECRET_KEY=$SECRET_KEY
 # IMPORTANTE: se trocar ENCRYPTION_KEY depois, todas as senhas SSH salvas
 # ficam ilegíveis. Backup desta chave + .env num cofre.
-# Formato Fernet = 32 bytes em base64 url-safe (44 chars terminando em '=').
+# Formato Fernet = 32 bytes em base64 url-safe.
 ENCRYPTION_KEY=$ENCRYPTION_KEY
+# Chave Fernet DEDICADA pro .nxbak (snapshot diário criptografado do banco,
+# feature v2.0.0). Separada da ENCRYPTION_KEY de propósito — pode rotacionar
+# uma sem invalidar a outra. Guarde em local SEPARADO do servidor — sem ela
+# os arquivos .nxbak são irrecuperáveis, nem pela ferramenta externa de leitura.
+DB_EXPORT_KEY=$DB_EXPORT_KEY
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 BACKUP_RETENTION_DAYS=7
 TZ=America/Sao_Paulo
 
 # === FTP PASV masquerade ===
-# [!] IP que o pyftpdlib anuncia em respostas PASV. Sem isso, container
-# anuncia 10.18.x.x e clientes externos ficam com transferência travada.
-# Se o servidor tem IP público fixo, coloque o IP público.
-# Se atrás de NAT recebendo via VPN/privado, coloque o IP que os clientes usam.
-FTP_MASQUERADE_ADDRESS=
+# IP que o pyftpdlib anuncia em respostas PASV. Sem isso, container anuncia
+# 10.18.x.x e clientes externos ficam com transferência travada.
+$FTP_MASQ_NOTE
+FTP_MASQUERADE_ADDRESS=$FTP_MASQ_VALUE
+
+# === Checagem de versão (banner de update no painel) ===
+# Opcional — vazio = banner desabilitado. Crie um PAT em
+# https://github.com/settings/tokens (scope "repo" read) e cole aqui.
+GITHUB_TOKEN=
+GITHUB_REPO=vagnerss2011-spec/NEXUS-BETA
 EOF
     chmod 600 .env
     ok ".env criado em $REPO_DIR/.env (chmod 600)"
-    warn "EDITE: DOMAIN, CERTBOT_EMAIL e FTP_MASQUERADE_ADDRESS antes de seguir"
+    if [ -n "$DETECTED_PUBLIC_IP" ]; then
+      warn "EDITE: DOMAIN e CERTBOT_EMAIL antes de seguir (FTP_MASQUERADE_ADDRESS já auto-preenchido como $DETECTED_PUBLIC_IP — revise se está certo pra seus clientes)"
+    else
+      warn "EDITE: DOMAIN, CERTBOT_EMAIL e FTP_MASQUERADE_ADDRESS antes de seguir"
+    fi
+
+    # Validação rápida do DOMAIN — só checa se o placeholder ainda está lá.
+    # Regex de FQDN é difícil de acertar bem; aqui só evita o erro mais comum
+    # (esquecer de editar e ficar com backup.exemplo.com.br).
+    note "Lembre: o certbot vai falhar se o DOMAIN não estiver editado e resolvendo via DNS."
+  fi
+fi
+
+# ═════════════════════════ [9] cron pg-backup.sh (opcional) ═════════════════════════
+if confirm_step "Cron diário do pg-backup.sh (OPCIONAL)" \
+"  Instala /etc/cron.d/nexus-pg-backup pra rodar pg_dump todo dia
+  às 03:30, retendo 14 dias em /var/backups/nexus-postgres/.
+  Por que separado do .nxbak (v2.0.0): o .nxbak protege os
+  backups COLETADOS (config dos devices); o pg-backup.sh protege
+  os METADADOS do app (users, devices, log_scheduler, OperacaoMassaLog
+  etc.) — são fluxos complementares.
+
+  Esta é OPCIONAL: o app funciona sem. Se a VM tiver snapshot do
+  hipervisor cobrindo o disco do banco, dá pra pular este passo."; then
+
+  CRON_FILE='/etc/cron.d/nexus-pg-backup'
+  if [ -f "$CRON_FILE" ]; then
+    skip "cron pg-backup (já instalada em $CRON_FILE)"
   else
-    skip ".env (já existe — não sobrescrevo)"
+    # Cron exige fim de arquivo com newline + permissão 644 + dono root
+    cat > "$CRON_FILE" <<EOF
+# NEXUS BACKUP — dump diário do Postgres às 03:30 (após scheduler 02:00).
+# Retém 14 dias por default. Log em /var/log/nexus-pg-backup.log.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 3 * * * root cd $REPO_DIR && ./scripts/pg-backup.sh >> /var/log/nexus-pg-backup.log 2>&1
+EOF
+    chmod 644 "$CRON_FILE"
+    touch /var/log/nexus-pg-backup.log
+    chmod 644 /var/log/nexus-pg-backup.log
+    ok "cron instalada em $CRON_FILE (próxima execução: amanhã 03:30)"
+    note "  Restore: docker compose exec -T db pg_restore -U \$POSTGRES_USER -d \$POSTGRES_DB --clean --if-exists < <dump_file>"
   fi
 fi
 
