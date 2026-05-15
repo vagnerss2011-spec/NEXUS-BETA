@@ -553,33 +553,47 @@ if confirm_step "UFW firewall (regras + enable)" \
 
   ufw_add() {
     local rule_check="$1" rule_add="$2" comment="${3:-}"
-    if ! ufw status | grep -qE "$rule_check"; then
-      if [ -n "$comment" ]; then
-        ufw allow "$rule_add" comment "$comment" >/dev/null
-      else
-        ufw allow "$rule_add" >/dev/null
-      fi
-      ok "ufw: $rule_add ($comment)"
-    else
+    if ufw status | grep -qE "$rule_check"; then
       skip "ufw: $rule_add"
+      return 0
     fi
+    # Captura stdout+stderr pra detectar "ERROR: Invalid syntax" (que UFW emite
+    # quando o comment tem caracteres rejeitados — apóstrofe, colchete, etc.).
+    # Antes deste fix (pre-v2.1.6), o script ignorava o erro e seguia em frente,
+    # deixando regras NÃO criadas no firewall — falha silenciosa.
+    local out
+    if [ -n "$comment" ]; then
+      out="$(ufw allow "$rule_add" comment "$comment" 2>&1)"
+    else
+      out="$(ufw allow "$rule_add" 2>&1)"
+    fi
+    if echo "$out" | grep -qi 'ERROR\|invalid'; then
+      fail "ufw allow '$rule_add' falhou: $out"
+    fi
+    ok "ufw: $rule_add ${comment:+($comment)}"
   }
 
   ufw --force default deny incoming >/dev/null
   ufw --force default allow outgoing >/dev/null
 
-  ufw_add '2288/tcp' '2288/tcp' 'SSH host (fail2ban [sshd] jail protege)'
-  ufw_add '80/tcp'   '80/tcp'   'HTTP (Let'\''s Encrypt + redirect)'
-  ufw_add '443/tcp'  '443/tcp'  'HTTPS (painel)'
+  # IMPORTANTE: comments do UFW são parseados em modo strict em versões modernas
+  # (Debian 13 / UFW 0.36.2+). Caracteres `'` (apóstrofe), `[`, `]` e às vezes
+  # `(` `)` quebram com "ERROR: Invalid syntax" — não chega nem a registrar a
+  # regra. Mantemos os comments aqui apenas com alfanuméricos + espaço + hífen
+  # + barra (que UFW aceita sempre). Detectado em prod 2026-05-15.
+  ufw_add '2288/tcp' '2288/tcp' 'SSH host - fail2ban protege sshd jail'
+  ufw_add '80/tcp'   '80/tcp'   'HTTP - Lets Encrypt e redirect'
+  ufw_add '443/tcp'  '443/tcp'  'HTTPS painel'
   ufw_add '21/tcp'   '21/tcp'   'FTP control - backup push'
-  ufw_add '22/tcp'   '22/tcp'   'SFTP push (porta padrao - container)'
+  ufw_add '22/tcp'   '22/tcp'   'SFTP push - porta padrao container'
   ufw_add '69/udp'   '69/udp'   'TFTP push'
   ufw_add '30000:30099/tcp' '30000:30099/tcp' 'FTP passive'
   ufw_add '30000:30099/udp' '30000:30099/udp' 'TFTP passive UDP'
 
   for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10; do
     if ! ufw status | grep -E '123/udp' | grep -q "$cidr"; then
-      ufw allow from "$cidr" to any port 123 proto udp comment "NTP server ($cidr RFC1918/6598)" >/dev/null
+      # Sem parênteses no comment — UFW Trixie rejeita
+      ufw allow from "$cidr" to any port 123 proto udp comment "NTP server $cidr RFC1918 RFC6598" >/dev/null
       ok "ufw: NTP allow $cidr"
     fi
   done
@@ -590,7 +604,7 @@ if confirm_step "UFW firewall (regras + enable)" \
       cidr="${cidr// /}"  # trim spaces
       [ -z "$cidr" ] && continue
       if ! ufw status | grep -E '123/udp' | grep -q "$cidr"; then
-        ufw allow from "$cidr" to any port 123 proto udp comment "NTP server ($cidr extra)" >/dev/null
+        ufw allow from "$cidr" to any port 123 proto udp comment "NTP server $cidr extra" >/dev/null
         ok "ufw: NTP allow $cidr (extra)"
       fi
     done

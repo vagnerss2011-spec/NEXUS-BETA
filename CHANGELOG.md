@@ -12,6 +12,31 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.6] - 2026-05-15
+
+### Corrigido — `install-nexus-backup.sh` Passo 7 UFW
+
+- **`ERROR: Invalid syntax` no Passo 7/9 (UFW firewall).** Reportado em instalação real. UFW em Debian 13 (versão 0.36.2+) parseia comments em modo strict — caracteres especiais como apóstrofe (`'`), colchetes (`[]`) e às vezes parênteses (`()`) fazem UFW retornar "ERROR: Invalid syntax" e abortar o `allow`. Os comments do script tinham:
+  - `'HTTP (Let'\\''s Encrypt + redirect)'` — apóstrofe em "Let's"
+  - `'SSH host (fail2ban [sshd] jail protege)'` — colchetes `[sshd]`
+  - Outros com parênteses.
+
+  Pior: o `ufw_add` helper original silenciosamente ignorava o erro (`>/dev/null` no stdout, sem checar exit code ou stderr), reportando `✓ ufw: 80/tcp` mesmo quando a regra não foi criada. Em produção, isso deixava o firewall **sem as regras esperadas** sem aviso nenhum no log do install.
+
+  **Fix duplo:**
+
+  1. **Simplificou TODOS os comments** pra usar apenas alfanuméricos + espaço + hífen + barra (caracteres que UFW sempre aceita). Mantém significado mas sem caracteres problemáticos:
+     - `HTTP - Lets Encrypt e redirect` (sem apóstrofe)
+     - `SSH host - fail2ban protege sshd jail` (sem colchetes)
+     - `NTP server $cidr RFC1918 RFC6598` (sem parênteses)
+
+  2. **Robusteceu `ufw_add`** pra capturar stdout+stderr, detectar regex `'ERROR|invalid'` no output e abortar com `fail()` se ocorrer. Antes o erro passava em silêncio; agora o script para na primeira regra que falhar com mensagem completa do UFW.
+
+### Notas técnicas
+
+- Backend/frontend de runtime **não mudaram**. Servidores existentes (Bandaa, Camon) não precisam redeploy.
+- Versões anteriores do script que rodaram com sucesso aparente em produção podem ter regras UFW faltando. Pra auditar: `ufw status numbered` e comparar com a lista esperada (2288/80/443/21/22/69/30000-30099 + 123/udp por faixa). Reaplique manualmente o que faltar com comments curtos sem caracteres especiais.
+
 ## [2.1.5] - 2026-05-15
 
 ### Corrigido — `install-nexus-backup.sh`
