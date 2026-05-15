@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Enum, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, Enum, Float, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -259,6 +259,42 @@ class Atividade(Base):
     alvo_nome = Column(String(150), nullable=True)
     detalhe = Column(String(200), nullable=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
+
+class OperacaoMassaLog(Base):
+    """Auditoria de execuções em massa de ações Mikrotik (módulo Operações).
+
+    Toda execução iniciada no painel grava 1 row aqui ANTES de disparar os
+    workers (pra ter rastro mesmo se o backend crashar no meio). Os
+    resultados por device são preenchidos depois, quando cada worker termina.
+
+    `resultados` é JSON com formato:
+        {"<device_id>": {"status": "sucesso|falha", "output": "...",
+                         "duracao_ms": 123}}
+    """
+    __tablename__ = "operacao_massa_log"
+    id = Column(Integer, primary_key=True)
+    # Slug da ação executada (ex.: 'checar_versao', 'remover_user', 'comando_livre').
+    # Não usa Enum pra simplificar adicionar ações novas sem migração.
+    acao = Column(String(40), nullable=False)
+    # Usuário que disparou. SET NULL pra não quebrar histórico se o user for deletado.
+    usuario_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Snapshot do nome (sobrevive a delete do user).
+    usuario_nome = Column(String(120), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="SET NULL"), nullable=True)
+    # IDs dos devices alvo (snapshot — devices podem ser deletados depois).
+    device_ids = Column(JSON, nullable=False)
+    # Parâmetros da ação (ex.: {"username": "admin", "group": "full"}).
+    # Senhas em texto NUNCA são salvas aqui — sanitizadas no router antes de gravar.
+    params = Column(JSON, nullable=True)
+    # Resultados por device. Preenchido quando workers terminam.
+    resultados = Column(JSON, nullable=True)
+    # Totais agregados pra UI mostrar sem precisar parsear `resultados`.
+    total = Column(Integer, nullable=False, default=0)
+    sucessos = Column(Integer, nullable=False, default=0)
+    falhas = Column(Integer, nullable=False, default=0)
+    iniciado_em = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    concluido_em = Column(DateTime(timezone=True), nullable=True)
+
 
 class LogScheduler(Base):
     __tablename__ = "log_scheduler"

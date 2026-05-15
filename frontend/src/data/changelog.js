@@ -15,6 +15,19 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.1.0 =====
+  {
+    data: '2026-05-15',
+    tipo: 'novidade',
+    icone: 'Wrench',
+    categoria: 'Mikrotik',
+    titulo: 'Operações Mikrotik em massa',
+    descricao:
+      'Nova aba "Operações" no menu lateral pra executar ações em vários Mikrotiks de uma vez só, sem precisar abrir Winbox/SSH em cada um. ' +
+      'Tem checagens rápidas (versão do RouterOS, lista de usuários, inventário com modelo/uptime/espaço livre) e configurações (criar/remover usuário, configurar SNMP, limpar arquivos órfãos da NAND). ' +
+      'Ações destrutivas pedem confirmação dupla (digitar "CONFIRMAR" ou "EXECUTAR") e admin master tem acesso a comando livre com bloqueio automático de comandos perigosos. ' +
+      'Cada execução fica registrada no histórico com quem disparou, em quais devices e o resultado por equipamento.',
+  },
   // ===== Maio/2026 — v2.0.0 =====
   {
     data: '2026-05-11',

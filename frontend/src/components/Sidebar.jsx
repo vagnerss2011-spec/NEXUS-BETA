@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X, Sparkles } from 'lucide-react'
+import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X, Sparkles, Wrench } from 'lucide-react'
 import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
 import { APP_VERSION } from '../version'
 
@@ -13,12 +13,16 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
   const canSeeUsers = ['admin', 'admin_empresa'].includes(user.role)
   const canSeeSettings = ['admin', 'admin_empresa'].includes(user.role)
   const canSeeLogs = ['admin', 'admin_empresa'].includes(user.role)
+  // Operações em massa: admin/admin_empresa/operador (mesmo nível do "criar device").
+  // Viewer fica de fora pois TODA execução muda estado em N devices ao mesmo tempo.
+  const canSeeOperacoes = ['admin', 'admin_empresa', 'operador'].includes(user.role)
 
   const links = [
     ...(isMaster ? [{ to: '/empresas', icon: Building2, label: 'Empresas' }] : []),
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/devices', icon: Router, label: 'Dispositivos' },
     { to: '/backups', icon: Archive, label: 'Backups' },
+    ...(canSeeOperacoes ? [{ to: '/operacoes', icon: Wrench, label: 'Operações' }] : []),
     ...(canSeeUsers ? [{ to: '/users', icon: Users, label: 'Usuários' }] : []),
     ...(canSeeLogs ? [{ to: '/logs', icon: ScrollText, label: 'Logs' }] : []),
     { to: '/novidades', icon: Sparkles, label: 'Novidades' },

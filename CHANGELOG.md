@@ -12,6 +12,64 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.0] - 2026-05-15
+
+### Adicionado
+
+- **Módulo Operações Mikrotik em massa.** Nova aba "Operações" no menu lateral
+  (admin/admin_empresa/operador) permite selecionar N devices Mikrotik com
+  protocolo `api` e executar ações curadas em paralelo, sem precisar abrir
+  Winbox/SSH device por device.
+  - **Catálogo de 8 ações:**
+    - *Read-only:* `checar_versao` (firmware + board + arch), `listar_usuarios`
+      (nome + group + last-logged-in), `inventario` (modelo + uptime + /file
+      livre).
+    - *Configuração (write idempotente):* `adicionar_user` (com group/senha),
+      `configurar_snmp` (community + trap-target + contact + location),
+      `cleanup_orfaos` (remove `nexus-api-*.rsc` órfãos da NAND — reusa o
+      `_cleanup_orfaos_nexus` do `mikrotik_api.py` como fonte única da verdade).
+    - *Destrutivo:* `remover_user` (com bloqueio: recusa remover o próprio
+      usuário usado pelo NEXUS pra conectar via API — senão a próxima coleta
+      ficaria órfã).
+    - *Admin master only:* `comando_livre` — executa qualquer comando librouteros
+      (ex.: `/system/identity/print`). Bloqueia regex de comandos destrutivos
+      (`reset-configuration`, `factory-reset`, `system/reboot`, `*/remove`)
+      como última linha de defesa antes de mandar pro device.
+  - **Paralelismo:** orquestrado por `asyncio.gather` + `Semaphore(5)` no router.
+    Cap fixo (mais conservador que o scheduler AIMD) porque é one-shot manual
+    sem critério adaptativo — 5 cobre bem sem saturar o servidor.
+    `librouteros` é síncrono; cada chamada vai pra `asyncio.to_thread` pra não
+    travar o loop do FastAPI.
+  - **Auditoria — nova tabela `operacao_massa_log`:** cada execução grava 1 row
+    ANTES de disparar os workers (rastreabilidade garantida mesmo se o backend
+    crashar no meio). Campos: `acao`, `usuario_id/nome` (snapshot), `empresa_id`,
+    `device_ids` (JSON), `params` (JSON, com senha sanitizada → "***"),
+    `resultados` (JSON `{device_id: {status, output, duracao_ms}}`), totais e
+    timestamps. Frontend tem botão "Histórico" com drill-down por execução.
+  - **Frontend (`pages/Operacoes.jsx`):**
+    - Lista filtrável de devices com checkboxes + "marcar todos visíveis".
+    - Dropdown de ações com badges CHECK/CONFIG/DESTRUTIVO.
+    - Form dinâmico de parâmetros (tipo text/password/select/textarea) lido do
+      catálogo no próprio componente.
+    - Modal de confirmação dupla pra destrutivas: usuário digita "CONFIRMAR" ou
+      "EXECUTAR" (palavra varia por ação).
+    - Tabela de resultado com **falhas no topo** (mesma lógica do modal de
+      scheduler v2.0.2) e linhas colapsáveis com output `<pre>`.
+  - **Segurança:**
+    - `comando_livre` só aparece no dropdown e é aceito pelo backend pra `role=admin`.
+    - Devices fora de escopo (não-master tentando rodar em empresa alheia)
+      filtrados pelo router antes da execução.
+    - Devices inelegíveis (não-Mikrotik ou não-API) viram falhas registradas
+      no resultado com motivo explícito — não causam erro 400 pra toda a
+      operação.
+
+### Notas técnicas
+
+- Schema migration é automática via `Base.metadata.create_all` no lifespan
+  do FastAPI — não exige `ALTER TABLE` manual.
+- Endpoint `GET /api/mikrotik-bulk/acoes` permite ao frontend descobrir
+  dinamicamente quais ações o user atual pode rodar (filtra master-only).
+
 ## [2.0.2] - 2026-05-12
 
 ### Corrigido
