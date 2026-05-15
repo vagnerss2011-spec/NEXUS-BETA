@@ -12,6 +12,35 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.3] - 2026-05-15
+
+### Corrigido
+
+- **Falsas-falhas em Mikrotiks com CPU fraca durante `/export` via API.**
+  Devices single-core <= 700 MHz (ex.: hAP lite, hEX lite, RB750G) levam
+  60-120s pra completar `/export file=tmp.rsc`, com a CPU em 100% e a
+  resposta da API bloqueada o tempo todo. O `_connect` usava `timeout=30`
+  (socket TCP do librouteros) — passados 30s sem `!done`, o socket
+  estourava e o backend marcava `falha` mesmo quando o device eventualmente
+  terminava. Mesmo problema afetava `fila.get(timeout=60.0)` na fase de
+  upload FTP do Plano C.
+  - **Fix:** ler `/system/resource` antes do export (custo ~25ms),
+    classificar via `_classificar_device` como **lento** se `cpu_count <= 1
+    AND cpu_freq <= 700 MHz`, e **reconectar com `timeout=200`** +
+    propagar `timeout_fetch=180.0` pro Plano C nesses casos. Devices
+    normais seguem com timeouts legados (30s conexão, 60s fetch), sem
+    impacto de performance.
+  - **Observabilidade:** quando um device é classificado como lento, o
+    backend loga em nível INFO:
+    ```
+    Device id=N board=X classificado como LENTO (cpu=1 core(s), 650 MHz) —
+    reconectando com timeout estendido (200s) e fetch_timeout=180s
+    ```
+    Pra ver quais devices estão usando o caminho estendido:
+    ```
+    docker logs nexus-beta-backend-1 2>&1 | grep "classificado como LENTO"
+    ```
+
 ## [2.1.2] - 2026-05-15
 
 ### Adicionado

@@ -71,8 +71,25 @@ def deliver_api_upload(device_id: int, conteudo: str) -> bool:
 log = logging.getLogger(__name__)
 
 
-def _connect(device: Device):
-    """Conecta via librouteros. TLS se device.api_tls."""
+# Timeouts pra devices "lentos" (single-core <= 700 MHz). Esses cobrem
+# o cenário onde /export file=tmp.rsc fica 60-120s com a CPU travada antes
+# de devolver !done no socket da API. Sem isso, o socket do librouteros
+# dá timeout (default 30s) e o backend marca como falha apesar do device
+# eventualmente terminar.
+_CONNECT_TIMEOUT_NORMAL = 30
+_CONNECT_TIMEOUT_LENTO = 200       # cobre /export até ~3 min
+_FETCH_TIMEOUT_NORMAL = 60.0       # legado — Queue do FTP server interno
+_FETCH_TIMEOUT_LENTO = 180.0
+
+
+def _connect(device: Device, timeout: int = _CONNECT_TIMEOUT_NORMAL):
+    """Conecta via librouteros. TLS se device.api_tls.
+
+    `timeout` é repassado pro socket TCP — controla tanto o handshake inicial
+    quanto cada `recv()` durante a sessão. Devices fracos (single-core <=
+    700 MHz) precisam de timeout estendido pq `/export file=...` bloqueia
+    a resposta da API enquanto a CPU gera o arquivo (60-120s típicos).
+    """
     # Import local pra não pagar import quando o serviço só usa SSH.
     from librouteros import connect
     from librouteros.login import plain
@@ -92,7 +109,7 @@ def _connect(device: Device):
         password=senha,
         host=host,
         port=device.porta,
-        timeout=30,
+        timeout=timeout,
         # `plain` em vez do default (que tenta `token` primeiro). RouterOS v7
         # mudou o handshake e o login token quebra em v6. `plain` funciona
         # nas duas versões e a senha viaja por dentro do canal TLS quando
@@ -156,9 +173,14 @@ def _find_file(api, nome: str) -> dict | None:
     return None
 
 
-def _export_via_upload_ftp(api, device: Device) -> str:
+def _export_via_upload_ftp(api, device: Device, timeout_fetch: float = _FETCH_TIMEOUT_NORMAL) -> str:
     """Plano C: faz o Mikrotik gerar /export file=tmp.rsc e usar /tool/fetch
     upload=yes mode=ftp pra empurrar o arquivo pro nosso FTP server.
+
+    `timeout_fetch` controla quanto tempo aguardamos a Queue do FTP server
+    receber o arquivo. Default 60s cobre devices normais; devices lentos
+    (classificados em `_classificar_device`) usam 180s pra cobrir o tempo
+    extra que a CPU fraca leva pra gerar + fazer upload.
 
     Why FTP e não SFTP: RouterOS `/tool/fetch mode=` aceita só ftp/http/https/scp
     (validado em prod 2026-05-11 — mode=sftp dispara "input does not match any
@@ -240,14 +262,14 @@ def _export_via_upload_ftp(api, device: Device) -> str:
             )
 
         # 4) Aguarda a Queue ser populada pelo SFTP server (cross-thread).
-        # Timeout generoso pra cobrir rede lenta / arquivo grande.
+        # Timeout vem do caller — 60s pra devices normais, 180s pra lentos.
         try:
-            conteudo = fila.get(timeout=60.0)
+            conteudo = fila.get(timeout=timeout_fetch)
         except queue.Empty:
             _try_remove_file(api, nome_rsc)
             raise RuntimeError(
-                f"/tool/fetch disparado mas arquivo não chegou em 60s. Possíveis "
-                f"causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:21, "
+                f"/tool/fetch disparado mas arquivo não chegou em {timeout_fetch:.0f}s. "
+                f"Possíveis causas: Mikrotik sem rota pra {settings.FTP_MASQUERADE_ADDRESS}:21, "
                 "firewall do NEXUS bloqueando a faixa passiva 30000-30099, "
                 "ou cred FTP incorreta. Verifique logs do FTP server."
             )
@@ -306,6 +328,53 @@ def _checar_nand_e_logar(api, device: "Device") -> None:
     except Exception:
         # debug only — checagem é opcional, falha aqui não interessa.
         log.debug("checagem NAND falhou pra device id=%s", device.id)
+
+
+# Heurística de "device lento" — single-core, freq baixa. Validado em prod
+# 2026-05-15: alguns Mikrotiks (ex.: hAP lite, hEX lite, RB750G) com clock
+# 600-700 MHz levam 60-120s pra completar /export file=tmp.rsc, com a CPU
+# fixa em 100%. Sem timeout estendido, o socket da API timeout em 30s e
+# o backend marca falsa-falha mesmo quando o device eventualmente termina.
+_CLASSIF_LENTO_CPU_COUNT_MAX = 1
+_CLASSIF_LENTO_FREQ_MHZ_MAX = 700
+
+
+def _classificar_device(api) -> dict:
+    """Lê /system/resource e classifica o device como lento/normal.
+
+    Retorna dict com `lento` (bool), `cpu_count`, `cpu_freq` (MHz) e `board`.
+    Falha silenciosa: se a chamada quebrar, assume `lento=False` (caminho
+    legado). Best-effort — não pode comprometer o backup.
+
+    Custo: ~25ms (uma chamada API rápida). Roda uma vez por backup.
+    """
+    info = {"lento": False, "cpu_count": None, "cpu_freq": None, "board": None}
+    try:
+        rows = list(api("/system/resource/print"))
+        if not rows:
+            return info
+        r = rows[0]
+        try:
+            cpu_count = int(r.get("cpu-count", "1"))
+        except Exception:
+            cpu_count = 1
+        try:
+            # cpu-frequency vem string tipo "650"; alguns firmwares enviam
+            # com sufixo (raro). int(...) levanta — caímos no except e
+            # consideramos device não-lento (mais seguro).
+            cpu_freq = int(str(r.get("cpu-frequency", "0")).strip())
+        except Exception:
+            cpu_freq = 0
+        info["cpu_count"] = cpu_count
+        info["cpu_freq"] = cpu_freq
+        info["board"] = r.get("board-name", "?")
+        info["lento"] = (
+            cpu_count <= _CLASSIF_LENTO_CPU_COUNT_MAX
+            and 0 < cpu_freq <= _CLASSIF_LENTO_FREQ_MHZ_MAX
+        )
+    except Exception as e:
+        log.debug("classificacao de device falhou: %s", e)
+    return info
 
 
 def _try_remove_file(api, nome: str) -> None:
@@ -426,7 +495,16 @@ def aplicar_config_padrao(device_id: int) -> tuple[bool, str]:
 
 
 def run_backup_via_api(device: Device) -> Tuple[str, str]:
-    """Entry point chamado pelo run_backup principal."""
+    """Entry point chamado pelo run_backup principal.
+
+    Fluxo:
+    1. Conecta com timeout padrão (30s) — rápido.
+    2. Lê /system/resource pra classificar (CPU count + freq).
+    3. Se device é classificado como LENTO (1 core <= 700 MHz): fecha e
+       reconecta com timeout estendido (200s) pra cobrir /export demorado.
+       Caso contrário, mantém a conexão atual.
+    4. Plano A → Plano C, com `timeout_fetch` adequado à classificação.
+    """
     try:
         api = _connect(device)
     except ImportError:
@@ -439,6 +517,26 @@ def run_backup_via_api(device: Device) -> Tuple[str, str]:
     except Exception as e:
         return "falha", f"Falha na conexão API Mikrotik: {e}"
 
+    info = _classificar_device(api)
+    if info["lento"]:
+        log.info(
+            "Device id=%s board=%s classificado como LENTO (cpu=%s core(s), %s MHz) — "
+            "reconectando com timeout estendido (%ds) e fetch_timeout=%.0fs",
+            device.id, info["board"], info["cpu_count"], info["cpu_freq"],
+            _CONNECT_TIMEOUT_LENTO, _FETCH_TIMEOUT_LENTO,
+        )
+        try:
+            api.close()
+        except Exception:
+            pass
+        try:
+            api = _connect(device, timeout=_CONNECT_TIMEOUT_LENTO)
+        except Exception as e:
+            return "falha", f"Reconexão com timeout estendido falhou: {e}"
+        timeout_fetch = _FETCH_TIMEOUT_LENTO
+    else:
+        timeout_fetch = _FETCH_TIMEOUT_NORMAL
+
     try:
         # Plano A — /export direto via API (mais rápido quando funciona)
         texto = _export_via_command(api)
@@ -449,7 +547,7 @@ def run_backup_via_api(device: Device) -> Tuple[str, str]:
         # de qualquer tamanho. Exige FTP_MASQUERADE_ADDRESS no .env + cred FTP
         # gerada no device (auto desde v1.4.4) + policy 'write,ftp' no grupo
         # do usuário no Mikrotik (read padrão não basta).
-        texto = _export_via_upload_ftp(api, device)
+        texto = _export_via_upload_ftp(api, device, timeout_fetch=timeout_fetch)
         if texto and texto.strip():
             return "sucesso", texto
         return "falha", "Export retornou vazio em todos os planos (A: vazio; C: arquivo recebido vazio)."
