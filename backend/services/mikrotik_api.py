@@ -255,6 +255,10 @@ def _export_via_upload_ftp(api, device: Device) -> str:
         # 5) Cleanup do arquivo temp no Mikrotik.
         _try_remove_file(api, nome_rsc)
 
+        # 5.1) Checagem de NAND — log apenas se livre < threshold. Roda DEPOIS
+        # do remove pra refletir o estado real (não inclui o tmp.rsc no cálculo).
+        _checar_nand_e_logar(api, device)
+
         if not conteudo or not conteudo.strip():
             raise RuntimeError("Arquivo chegou via SFTP mas com conteúdo vazio.")
         return conteudo
@@ -263,6 +267,45 @@ def _export_via_upload_ftp(api, device: Device) -> str:
         # device chegue (sem nada esperando, pipeline normal processa).
         with _pending_lock:
             _pending_api_uploads.pop(device.id, None)
+
+
+# Threshold de NAND livre — abaixo disso, dispara WARNING no log.
+# 10% cobre devices comuns (16-64 MB NAND); abaixo disso o /export começa a
+# falhar por falta de espaço pra gravar o tmp.rsc antes do upload.
+_NAND_THRESHOLD_PCT = 10
+
+
+def _checar_nand_e_logar(api, device: "Device") -> None:
+    """Lê /system/resource e loga WARNING se NAND livre < _NAND_THRESHOLD_PCT.
+
+    Decisão consciente (2026-05-15): só log, sem alerta Telegram, pra não
+    poluir o canal de alertas com avisos preventivos. Ver no docker logs:
+        grep "NAND com" <logs>
+
+    Best-effort: qualquer falha aqui é silenciosa — checagem não pode
+    comprometer o sucesso do backup que acabou de rodar.
+    """
+    try:
+        rows = list(api("/system/resource/print"))
+        if not rows:
+            return
+        r = rows[0]
+        free_b = int(r.get("free-hdd-space", "0"))
+        total_b = int(r.get("total-hdd-space", "0"))
+        if total_b <= 0:
+            return
+        pct = (free_b / total_b) * 100
+        if pct < _NAND_THRESHOLD_PCT:
+            free_mb = free_b / (1024 * 1024)
+            total_mb = total_b / (1024 * 1024)
+            log.warning(
+                "Device id=%s (%s): NAND com %.1f%% livre (%.2f MB de %.2f MB total). "
+                "Threshold=%d%% — pode causar falha de backup em breve.",
+                device.id, device.nome, pct, free_mb, total_mb, _NAND_THRESHOLD_PCT,
+            )
+    except Exception:
+        # debug only — checagem é opcional, falha aqui não interessa.
+        log.debug("checagem NAND falhou pra device id=%s", device.id)
 
 
 def _try_remove_file(api, nome: str) -> None:

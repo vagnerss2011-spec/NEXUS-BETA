@@ -12,6 +12,25 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.1.2] - 2026-05-15
+
+### Adicionado
+
+- **Checagem preventiva de NAND nos backups via API Mikrotik.** Após cada
+  backup bem-sucedido via Plano C (`/export file=tmp.rsc` + `/tool/fetch`),
+  lê `/system/resource` e dispara `log.warning` se NAND livre < 10% (threshold
+  hardcoded em `_NAND_THRESHOLD_PCT`). Permite observar devices chegando no
+  limite antes do `/export` começar a falhar por falta de espaço, sem
+  poluir o canal Telegram com avisos preventivos (decisão consciente —
+  só docker logs).
+  - Best-effort: qualquer falha na checagem é silenciosa (log.debug). O
+    backup já rodou com sucesso quando esta função é chamada, então
+    nenhum erro aqui pode regredir o resultado.
+  - Pra observar em prod:
+    ```
+    docker logs nexus-beta-backend-1 2>&1 | grep "NAND com"
+    ```
+
 ## [2.1.1] - 2026-05-15
 
 ### Corrigido
