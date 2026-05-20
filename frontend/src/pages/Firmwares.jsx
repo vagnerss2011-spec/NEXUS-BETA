@@ -171,8 +171,8 @@ function CredencialModal({ credencial, onClose }) {
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-slate-800 rounded-lg border border-amber-500/40 w-full max-w-md" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-700">
-          <h3 className="font-semibold text-amber-300 flex items-center gap-2"><KeyRound size={18} /> Credencial FTP gerada</h3>
-          <p className="text-xs text-slate-400 mt-1">A senha será mostrada apenas uma vez. Copie e guarde.</p>
+          <h3 className="font-semibold text-amber-300 flex items-center gap-2"><KeyRound size={18} /> Credencial FTP</h3>
+          <p className="text-xs text-slate-400 mt-1">Use no device pra baixar firmwares via FTP. Copie usuário e senha.</p>
         </div>
         <div className="p-4 space-y-3">
           <div>
@@ -203,9 +203,9 @@ function CredencialModal({ credencial, onClose }) {
               </button>
             </div>
           </div>
-          <div className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/30 rounded p-2">
-            <AlertTriangle size={14} className="inline mr-1" />
-            Após fechar este modal, a senha não poderá mais ser recuperada. Se precisar, regere a credencial.
+          <div className="text-xs text-slate-400 bg-slate-900/60 border border-slate-700 rounded p-2">
+            <Info size={14} className="inline mr-1" />
+            Você pode reabrir esta credencial a qualquer momento pelo botão da chave na listagem. "Regerar senha" troca a senha e invalida a anterior nos devices.
           </div>
         </div>
         <div className="flex justify-end p-4 border-t border-slate-700">
@@ -223,6 +223,7 @@ function CredencialModal({ credencial, onClose }) {
 function OrigemModal({ open, onClose, onSucesso }) {
   const [nome, setNome] = useState('')
   const [descricao, setDescricao] = useState('')
+  const [origemCidr, setOrigemCidr] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [erro, setErro] = useState('')
 
@@ -237,10 +238,11 @@ function OrigemModal({ open, onClose, onSucesso }) {
       const r = await api.post('/firmware-origens', {
         nome: nome.trim(),
         descricao: descricao.trim() || null,
+        origem_cidr: origemCidr.trim() || null,
       })
       onSucesso(r.data)   // entrega credencial com senha pra exibir
       onClose()
-      setNome(''); setDescricao('')
+      setNome(''); setDescricao(''); setOrigemCidr('')
     } catch (e) {
       setErro(e.response?.data?.detail || e.message || 'Falha ao criar origem')
     } finally {
@@ -267,6 +269,15 @@ function OrigemModal({ open, onClose, onSucesso }) {
             <textarea value={descricao} onChange={e => setDescricao(e.target.value)} disabled={enviando} rows={2}
               className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-sm text-white"
               placeholder="Pra que/quem é esse acesso (opcional)" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">IP(s) de origem — whitelist (opcional)</label>
+            <input value={origemCidr} onChange={e => setOrigemCidr(e.target.value)} disabled={enviando}
+              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-sm text-white font-mono"
+              placeholder="ex: 200.1.2.3  ou  200.1.2.0/24, 187.4.5.6" />
+            <p className="text-[11px] text-slate-500 mt-1">
+              Se preenchido, o FTP só aceita conexões desses IPs. Vazio = qualquer IP (só a senha protege). Libere o mesmo IP no firewall do servidor.
+            </p>
           </div>
           <p className="text-xs text-slate-500 flex items-start gap-1.5">
             <Info size={13} className="shrink-0 mt-0.5" />
@@ -421,6 +432,15 @@ export default function Firmwares() {
       carregar()
     } catch (e) {
       alert('Erro ao regerar senha: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
+  async function verCredencial(o) {
+    try {
+      const r = await api.get(`/firmware-origens/${o.id}/credencial`)
+      setCredencial(r.data)   // reabre o modal com user+senha pra copiar
+    } catch (e) {
+      alert('Erro ao buscar credencial: ' + (e.response?.data?.detail || e.message))
     }
   }
 
@@ -658,9 +678,10 @@ export default function Firmwares() {
                     <th className="text-left px-3 py-2">Nome</th>
                     <th className="text-left px-3 py-2">Usuário FTP</th>
                     <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">IP whitelist</th>
                     <th className="text-left px-3 py-2">Último acesso</th>
                     <th className="text-left px-3 py-2">Criado</th>
-                    <th className="text-right px-3 py-2 w-44">Ações</th>
+                    <th className="text-right px-3 py-2 w-56">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700">
@@ -678,6 +699,11 @@ export default function Firmwares() {
                           ? <span className="text-xs bg-emerald-500/15 text-emerald-300 px-2 py-0.5 rounded">Ativo</span>
                           : <span className="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded">Inativo</span>}
                       </td>
+                      <td className="px-3 py-2 text-xs">
+                        {o.origem_cidr
+                          ? <code className="text-amber-300 font-mono text-[11px]">{o.origem_cidr}</code>
+                          : <span className="text-slate-600">qualquer IP</span>}
+                      </td>
                       <td className="px-3 py-2 text-xs text-slate-400">
                         {o.ultimo_acesso_em ? formatarData(o.ultimo_acesso_em) : <span className="text-slate-600">nunca</span>}
                         {o.ultimo_ip && <div className="text-[10px] text-slate-500 font-mono">{o.ultimo_ip}</div>}
@@ -689,6 +715,11 @@ export default function Firmwares() {
                       <td className="px-3 py-2 text-right">
                         {podeCRUDOrigem && (
                           <div className="inline-flex gap-1">
+                            <button onClick={() => verCredencial(o)}
+                              title="Ver / copiar usuário e senha"
+                              className="p-1.5 text-sky-400 hover:bg-slate-700 rounded">
+                              <KeyRound size={14} />
+                            </button>
                             <button onClick={() => toggleAtivo(o)}
                               title={o.ativo ? 'Desativar' : 'Ativar'}
                               className={`p-1.5 hover:bg-slate-700 rounded ${o.ativo ? 'text-emerald-400' : 'text-slate-500'}`}>

@@ -12,6 +12,25 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.2.1] - 2026-05-19
+
+Refinamentos do Mirror FTP após validação real no ibiunet (download de firmware Huawei de 1.1GB).
+
+### Corrigido
+
+- **FTP travava após download grande quando o cliente usava modo ativo.** Sintoma: depois de baixar um firmware (modo passivo OK), reconectar com cliente FTP desktop pra navegar/baixar outros arquivos travava cada operação ~30s e falhava (`Active data channel timed out` no log). Causa: modo FTP **ativo** (PORT/EPRT) é fisicamente impossível atrás do Docker NAT — o servidor tentaria abrir a conexão de dados de volta pro IP que o cliente informa, mas clientes atrás de NAT informam IP privado inalcançável.
+  - **Fix:** `NexusFTPHandler` agora **recusa PORT/EPRT pra origens firmware** com `500 Modo ativo nao suportado. Configure o cliente em modo passivo (PASV).` — clientes bem comportados (FileZilla, lftp, devices) caem pra PASV automaticamente. Devices de push (fluxo legado) seguem com o comportamento original, intocados.
+
+### Adicionado
+
+- **Whitelist de IP por origem FTP** (`firmware_origens.origem_cidr`). Campo opcional no cadastro da origem: se preenchido, o FTP só autentica conexões vindas dos IPs/CIDRs cadastrados (defesa extra além da senha); vazio = qualquer IP. Aceita múltiplos separados por vírgula (`200.1.2.3/32, 10.0.0.0/24`). Enforce em `_auth_firmware_origem` via `_ip_match_lista`. Validação de formato no router (400 em CIDR inválido). Coluna exibida na tabela de origens.
+- **Ver/copiar credencial a qualquer momento** (`GET /api/firmware-origens/{id}/credencial`). Diferente do device push (senha mostrada 1x), a origem firmware é reconfigurada em vários devices ao longo do tempo — agora o admin recupera usuário+senha pelo botão da chave na listagem sem precisar regerar (o que invalidaria os devices já configurados). Senha Fernet-decrypt no backend; só admin/admin_empresa acessa. O modal de credencial (com toggle exibir/ocultar + botões de copiar) virou reutilizável pra criação, regeneração e consulta.
+
+### Notas técnicas
+
+- Migração idempotente: `ALTER TABLE firmware_origens ADD COLUMN IF NOT EXISTS origem_cidr`. Origens criadas na v2.2.0 ficam sem whitelist (qualquer IP) até o admin preencher.
+- **Importante pra quem baixa via cliente desktop:** marque modo **passivo** nas configurações do cliente FTP (FileZilla: Editar → Configurações → Conexão → FTP → Modo passivo). Devices (Mikrotik `/tool fetch`, Huawei) já usam passivo por default.
+
 ## [2.2.0] - 2026-05-19
 
 ### Adicionado — Mirror FTP de firmwares (aba "Firmwares" no painel)

@@ -40,8 +40,9 @@ from schemas import (
     FirmwareOrfaoOut, FirmwareOrigemCreate, FirmwareOrigemCredencial,
     FirmwareOrigemOut, FirmwareOrigemUpdate, FirmwareOut, FirmwareUpdate,
 )
-from services.crypto import encrypt
+from services.crypto import decrypt, encrypt
 from services import audit
+from ipaddress import ip_network
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +102,27 @@ def _nome_unico_no_disco(nome_sanitizado: str) -> str:
         if not os.path.exists(os.path.join(FIRMWARE_DIR, candidato)):
             return candidato
     raise HTTPException(status_code=409, detail="Não foi possível gerar nome único")
+
+
+def _validar_e_normalizar_cidr_lista(raw: str | None) -> str | None:
+    """Valida lista de CIDRs separados por vírgula/espaço/quebra de linha.
+
+    Retorna a lista normalizada ("a/32, b/24") ou None se vazio. Levanta 400
+    se algum item for inválido — falha cedo em vez de gravar lixo que silencia
+    o auth depois. IPs soltos (sem /N) são aceitos (vira /32 ou /128)."""
+    if raw is None:
+        return None
+    itens = []
+    for parte in raw.replace("\n", ",").replace(" ", ",").split(","):
+        parte = parte.strip()
+        if not parte:
+            continue
+        try:
+            net = ip_network(parte, strict=False)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"IP/CIDR inválido: '{parte}'")
+        itens.append(str(net))
+    return ", ".join(itens) if itens else None
 
 
 def _gerar_user_origem(origem_id: int) -> str:
@@ -490,6 +512,7 @@ async def criar_origem(
             raise HTTPException(status_code=403, detail="Sem empresa vinculada")
         empresa_id = user.empresa_id
 
+    cidr = _validar_e_normalizar_cidr_lista(data.origem_cidr)
     senha = _gerar_senha_origem()
     origem = FirmwareOrigem(
         nome=data.nome.strip(),
@@ -500,6 +523,7 @@ async def criar_origem(
         usuario_ftp=f"__pend_{secrets.token_hex(8)}__",
         senha_ftp_enc=encrypt(senha),
         ativo=True,
+        origem_cidr=cidr,
         empresa_id=empresa_id,
         criado_por_id=user.id,
         criado_por_nome=user.nome,
@@ -547,9 +571,44 @@ async def atualizar_origem(
         origem.descricao = data.descricao.strip() or None
     if data.ativo is not None:
         origem.ativo = data.ativo
+    if data.origem_cidr is not None:
+        # "" (vazio) limpa a whitelist; valor válido seta; inválido → 400.
+        origem.origem_cidr = _validar_e_normalizar_cidr_lista(data.origem_cidr)
     await db.commit()
     await db.refresh(origem)
     return _to_origem_out(origem)
+
+
+@router.get(
+    "/firmware-origens/{origem_id}/credencial", response_model=FirmwareOrigemCredencial,
+    dependencies=[Depends(require_role(UserRole.admin, UserRole.admin_empresa))],
+)
+async def ver_credencial(
+    origem_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Retorna a credencial COM a senha em texto puro pra copiar/colar a qualquer
+    momento. Diferente do device push (senha mostrada 1x), a origem firmware é
+    pensada pra ser reconfigurada em vários devices ao longo do tempo — o admin
+    precisa recuperar a senha sem ter que regerar (o que invalidaria os devices
+    já configurados). A senha é Fernet-decrypt aqui; só admin/admin_empresa
+    chega neste endpoint."""
+    origem = (await db.execute(
+        select(FirmwareOrigem).where(FirmwareOrigem.id == origem_id)
+    )).scalar_one_or_none()
+    if not origem:
+        raise HTTPException(status_code=404, detail="Origem não encontrada")
+    if not is_master(user) and origem.empresa_id != user.empresa_id:
+        raise HTTPException(status_code=403, detail="Sem acesso a esta origem")
+    try:
+        senha = decrypt(origem.senha_ftp_enc)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Falha ao descriptografar a senha")
+    return FirmwareOrigemCredencial.model_validate({
+        **FirmwareOrigemOut.model_validate(origem).model_dump(),
+        "senha_ftp": senha,
+    })
 
 
 @router.post(

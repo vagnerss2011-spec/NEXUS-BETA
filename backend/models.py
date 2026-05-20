@@ -363,6 +363,11 @@ class FirmwareOrigem(Base):
     usuario_ftp = Column(String(64), nullable=False, unique=True)
     senha_ftp_enc = Column(Text, nullable=False)          # Fernet
     ativo = Column(Boolean, nullable=False, default=True)
+    # Whitelist de IPs/CIDRs de origem (v2.2.1). NULL/vazio = aceita qualquer
+    # IP (só a senha protege). Preenchido = recusa conexões FTP fora da lista.
+    # Múltiplos separados por vírgula: "200.1.2.3/32, 10.0.0.0/24". Defesa extra
+    # pra clientes com IP fixo conhecido; o admin libera o mesmo IP no firewall.
+    origem_cidr = Column(String(255), nullable=True)
     # Empresa opcional — origem pode ser global (NULL) ou amarrada a uma
     # empresa específica. Sem efeito no FTP auth atualmente (todas as origens
     # veem o mesmo /var/firmware/), só pra UI segmentar quem cadastrou.

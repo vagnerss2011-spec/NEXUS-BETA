@@ -353,6 +353,9 @@ class FirmwareOrfaoOut(BaseModel):
 class FirmwareOrigemCreate(BaseModel):
     nome: str
     descricao: Optional[str] = None
+    # Whitelist de IP(s)/CIDR(s) de origem — vazio = sem restrição.
+    # Múltiplos separados por vírgula: "200.1.2.3/32, 10.0.0.0/24".
+    origem_cidr: Optional[str] = None
     empresa_id: Optional[int] = None  # NULL = global (visível a todos os admins master)
 
 
@@ -360,6 +363,8 @@ class FirmwareOrigemUpdate(BaseModel):
     nome: Optional[str] = None
     descricao: Optional[str] = None
     ativo: Optional[bool] = None
+    # None = não tocar; "" (vazio) = limpar whitelist; valor = setar.
+    origem_cidr: Optional[str] = None
 
 
 class FirmwareOrigemOut(BaseModel):
@@ -369,6 +374,7 @@ class FirmwareOrigemOut(BaseModel):
     descricao: Optional[str] = None
     usuario_ftp: str
     ativo: bool
+    origem_cidr: Optional[str] = None
     empresa_id: Optional[int] = None
     ultimo_acesso_em: Optional[datetime] = None
     ultimo_ip: Optional[str] = None

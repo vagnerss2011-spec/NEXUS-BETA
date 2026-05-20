@@ -427,6 +427,13 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS tipo devicetipo NOT NULL DEFAULT 'roteador'
         """))
 
+        # firmware_origens.origem_cidr — whitelist opcional de IP de origem (v2.2.1).
+        # NULL = sem restrição (compat com origens criadas na v2.2.0).
+        await conn.execute(text("""
+            ALTER TABLE firmware_origens
+            ADD COLUMN IF NOT EXISTS origem_cidr VARCHAR(255)
+        """))
+
     await iniciar_scheduler()
     iniciar_ftp_server()
     iniciar_sftp_server()

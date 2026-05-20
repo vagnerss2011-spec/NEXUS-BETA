@@ -127,6 +127,22 @@ def _ip_match(remote_ip: str, allowed_cidr: str | None) -> bool:
         return False
 
 
+def _ip_match_lista(remote_ip: str, cidr_lista: str | None) -> bool:
+    """Casa o IP contra uma LISTA de CIDRs (separados por vírgula/espaço/quebra).
+
+    Usado na whitelist das origens firmware, onde o admin pode cadastrar
+    vários IPs de saída do mesmo cliente (ex.: link redundante). Entradas
+    inválidas são ignoradas silenciosamente — não derrubam a checagem das
+    válidas. Retorna True se casar QUALQUER CIDR da lista."""
+    if not cidr_lista or not cidr_lista.strip():
+        return False
+    for parte in cidr_lista.replace("\n", ",").replace(" ", ",").split(","):
+        parte = parte.strip()
+        if parte and _ip_match(remote_ip, parte):
+            return True
+    return False
+
+
 # Cache thread-local pra discriminar o tipo de user logado entre
 # validate_authentication e os métodos chamados por path (has_perm,
 # get_home_dir, get_perms). pyftpdlib chama os 3 últimos sem passar o
@@ -210,7 +226,10 @@ class DBAuthorizer(DummyAuthorizer):
             raise AuthenticationFailed("Authentication failed.")
 
     def _auth_firmware_origem(self, db, origem, password, ip, username):
-        """Auth de FirmwareOrigem — sem whitelist CIDR, mas precisa estar ativa."""
+        """Auth de FirmwareOrigem — senha + whitelist CIDR opcional.
+
+        origem.origem_cidr vazio/NULL = aceita qualquer IP (só senha protege).
+        Preenchido = recusa conexões fora da lista de CIDRs (defesa extra)."""
         if not origem.ativo or not origem.senha_ftp_enc:
             auth_log.warning("AUTH_FAIL ip=%s user=%s reason=origem_desativada", ip, username)
             auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=origem.empresa_id,
@@ -226,6 +245,14 @@ class DBAuthorizer(DummyAuthorizer):
             auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
             auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=origem.empresa_id,
                                   detalhe="senha incorreta (origem firmware)", protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+        # Whitelist de IP — só enforça se o admin cadastrou origem_cidr.
+        # Vazio = sem restrição (compat com origens criadas antes da v2.2.1).
+        cidr = getattr(origem, "origem_cidr", None)
+        if cidr and cidr.strip() and not _ip_match_lista(ip, cidr):
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=origem.empresa_id,
+                                  detalhe=f"IP {ip} fora da whitelist {cidr}", protocolo="FTP")
             raise AuthenticationFailed("Authentication failed.")
         # Telemetria — atualiza ultimo_acesso da origem
         try:
@@ -287,6 +314,26 @@ class DBAuthorizer(DummyAuthorizer):
 class NexusFTPHandler(FTPHandler):
     """Hook do upload completo. Limite de tamanho aplicado no nível do DTPHandler
     via setting do servidor; aqui só processamos depois do arquivo no disco."""
+
+    def ftp_PORT(self, line):
+        # Modo ATIVO não funciona com o servidor atrás do Docker NAT: o servidor
+        # tentaria abrir a conexão de dados DE VOLTA pro IP que o cliente informa
+        # no PORT, mas clientes atrás de NAT informam IP privado (inalcançável)
+        # → "active data channel timed out", travando a sessão ~30s por comando.
+        # Pra origens firmware recusamos PORT com mensagem clara — clientes bem
+        # comportados (FileZilla, lftp, devices) caem pra PASV automaticamente.
+        # Devices de push (fluxo legado) seguem com o comportamento original.
+        if _USER_TIPO_CACHE.get(self.username) == "firmware_origem":
+            self.respond("500 Modo ativo nao suportado. Configure o cliente em modo passivo (PASV).")
+            return
+        super().ftp_PORT(line)
+
+    def ftp_EPRT(self, line):
+        # Mesma lógica do ftp_PORT pra o comando estendido (IPv6/EPRT).
+        if _USER_TIPO_CACHE.get(self.username) == "firmware_origem":
+            self.respond("500 Modo ativo nao suportado. Configure o cliente em modo passivo (PASV).")
+            return
+        super().ftp_EPRT(line)
 
     def on_file_received(self, filepath):
         # Discrimina por tipo cacheado no auth — origem firmware NÃO entra no

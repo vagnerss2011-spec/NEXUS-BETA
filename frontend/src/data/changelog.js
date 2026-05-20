@@ -15,6 +15,18 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.2.1 =====
+  {
+    data: '2026-05-19',
+    tipo: 'melhoria',
+    icone: 'HardDrive',
+    categoria: 'Firmwares',
+    titulo: 'Mirror de firmwares: whitelist de IP + ver credencial quando quiser',
+    descricao:
+      'A senha da origem FTP agora pode ser consultada e copiada a qualquer momento (botão da chave na lista), sem precisar regerar. ' +
+      'Cada origem aceita uma whitelist de IP(s): se preenchida, o FTP só aceita conexões daqueles endereços — segurança extra além da senha. ' +
+      'Também corrigimos um travamento ao baixar via cliente FTP desktop: lembre de marcar "modo passivo" no seu cliente (devices como Mikrotik já usam passivo automaticamente).',
+  },
   // ===== Maio/2026 — v2.2.0 =====
   {
     data: '2026-05-19',
