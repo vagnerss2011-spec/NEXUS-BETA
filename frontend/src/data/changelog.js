@@ -15,6 +15,17 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.2.3 =====
+  {
+    data: '2026-05-20',
+    tipo: 'correcao',
+    icone: 'HardDrive',
+    categoria: 'Firmwares',
+    titulo: 'Correção: download de firmware em equipamentos Huawei/IP público',
+    descricao:
+      'O download via FTP voltou a funcionar em equipamentos com IP público (ex.: Huawei NE8000), que usam modo ativo. ' +
+      'Uma mudança anterior bloqueava esse modo por engano. Dica no Huawei: rode "binary" antes do "get" pra não corromper o firmware.',
+  },
   // ===== Maio/2026 — v2.2.2 =====
   {
     data: '2026-05-20',
@@ -35,8 +46,7 @@ export const CHANGELOG_ENTRIES = [
     titulo: 'Mirror de firmwares: whitelist de IP + ver credencial quando quiser',
     descricao:
       'A senha da origem FTP agora pode ser consultada e copiada a qualquer momento (botão da chave na lista), sem precisar regerar. ' +
-      'Cada origem aceita uma whitelist de IP(s): se preenchida, o FTP só aceita conexões daqueles endereços — segurança extra além da senha. ' +
-      'Também corrigimos um travamento ao baixar via cliente FTP desktop: lembre de marcar "modo passivo" no seu cliente (devices como Mikrotik já usam passivo automaticamente).',
+      'Cada origem aceita uma whitelist de IP(s): se preenchida, o FTP só aceita conexões daqueles endereços — segurança extra além da senha.',
   },
   // ===== Maio/2026 — v2.2.0 =====
   {

@@ -12,6 +12,18 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.2.3] - 2026-05-20
+
+### Corrigido — regressão crítica: modo ativo bloqueado quebrava devices com IP público
+
+- **Reverte o bloqueio de modo ativo (PORT/EPRT) introduzido na v2.2.1.** A v2.2.1 recusava modo ativo pra origens firmware achando que "forçaria passivo" — diagnóstico errado baseado num travamento que era específico de **cliente desktop atrás de NAT**. Na prática isso quebrou o caso de uso real: **Huawei NE8000** (e qualquer device com IP público) baixa firmware em **modo ativo** com sucesso, porque o servidor consegue abrir a conexão de dados de volta pro IP público do device. Validação: o mesmo NE8000 (IP `168.121.88.0`) baixou um firmware de 1.1 GB na v2.2.0 (sem o bloqueio) e parou de funcionar na v2.2.1/2.2.2.
+  - **Fix:** `NexusFTPHandler` não sobrescreve mais `ftp_PORT`/`ftp_EPRT`. O servidor volta a aceitar **os dois modos** (ativo e passivo) — comportamento FTP correto. Device com IP público usa ativo; cliente atrás de NAT configura passivo no próprio cliente.
+
+### Notas
+
+- Quem está atrás de NAT (ex.: cliente FTP desktop numa LAN) e vê "active data channel timed out": configure **modo passivo** no cliente. Devices com IP público (NE8000, etc.) funcionam direto em ativo.
+- No cliente FTP do Huawei VRP (NE8000): `binary` antes do `get` é **obrigatório** pra firmware não corromper. `passive` é opcional (ativo já funciona com IP público).
+
 ## [2.2.2] - 2026-05-20
 
 ### Adicionado

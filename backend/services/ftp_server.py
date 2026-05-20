@@ -315,25 +315,13 @@ class NexusFTPHandler(FTPHandler):
     """Hook do upload completo. Limite de tamanho aplicado no nível do DTPHandler
     via setting do servidor; aqui só processamos depois do arquivo no disco."""
 
-    def ftp_PORT(self, line):
-        # Modo ATIVO não funciona com o servidor atrás do Docker NAT: o servidor
-        # tentaria abrir a conexão de dados DE VOLTA pro IP que o cliente informa
-        # no PORT, mas clientes atrás de NAT informam IP privado (inalcançável)
-        # → "active data channel timed out", travando a sessão ~30s por comando.
-        # Pra origens firmware recusamos PORT com mensagem clara — clientes bem
-        # comportados (FileZilla, lftp, devices) caem pra PASV automaticamente.
-        # Devices de push (fluxo legado) seguem com o comportamento original.
-        if _USER_TIPO_CACHE.get(self.username) == "firmware_origem":
-            self.respond("500 Modo ativo nao suportado. Configure o cliente em modo passivo (PASV).")
-            return
-        super().ftp_PORT(line)
-
-    def ftp_EPRT(self, line):
-        # Mesma lógica do ftp_PORT pra o comando estendido (IPv6/EPRT).
-        if _USER_TIPO_CACHE.get(self.username) == "firmware_origem":
-            self.respond("500 Modo ativo nao suportado. Configure o cliente em modo passivo (PASV).")
-            return
-        super().ftp_EPRT(line)
+    # NOTA: NÃO bloqueamos modo ativo (PORT/EPRT). A v2.2.1 chegou a recusar
+    # ativo pra origens firmware achando que "forçava passivo", mas isso quebrou
+    # devices com IP PÚBLICO (ex.: Huawei NE8000) que usam ativo com sucesso —
+    # o servidor consegue abrir a conexão de dados de volta pro IP público do
+    # device. Modo ativo só falha pra clientes atrás de NAT (que devem usar
+    # passivo no próprio cliente). Deixar os 2 modos disponíveis é o
+    # comportamento FTP correto; o cliente escolhe o que funciona pra ele.
 
     def on_file_received(self, filepath):
         # Discrimina por tipo cacheado no auth — origem firmware NÃO entra no
