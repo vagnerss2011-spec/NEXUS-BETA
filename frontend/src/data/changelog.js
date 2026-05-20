@@ -15,6 +15,19 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.2.0 =====
+  {
+    data: '2026-05-19',
+    tipo: 'novidade',
+    icone: 'HardDrive',
+    categoria: 'Firmwares',
+    titulo: 'Mirror FTP de firmwares — devices baixam do servidor',
+    descricao:
+      'Nova aba "Firmwares" no menu. Você sobe firmware pelo painel (Mikrotik npk, Huawei bin, etc.) e cadastra uma "origem" — o sistema gera usuário e senha de FTP. ' +
+      'Os devices remotos usam essa credencial pra baixar do servidor via /tool fetch (Mikrotik) ou comando equivalente. ' +
+      'Acaba com a necessidade de subir o mesmo firmware pra cada device — você sobe uma vez no painel e quantos devices quiserem baixam pelo mirror. ' +
+      'A senha aparece UMA vez na criação — anote ou regere depois se perder. Cada origem pode ser ativada/desativada sem precisar excluir.',
+  },
   // ===== Maio/2026 — v2.1.0 =====
   {
     data: '2026-05-15',

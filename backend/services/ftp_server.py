@@ -21,11 +21,12 @@ from sqlalchemy import select
 from pyftpdlib.authorizers import DummyAuthorizer, AuthenticationFailed
 from pyftpdlib.handlers import FTPHandler
 from pyftpdlib.servers import ThreadedFTPServer
-from models import Device, Protocolo
+from datetime import datetime, timezone
+from models import Device, Protocolo, FirmwareOrigem, Atividade, TipoAtividade
 from services.crypto import decrypt
 from services.push_backup import (
     SyncSessionLocal, processar_upload, auditar_acesso_negado,
-    auditar_falha_push,
+    auditar_falha_push, _humanizar_bytes as _humanizar_bytes_local,
 )
 
 log = logging.getLogger("nexus.ftp")
@@ -55,6 +56,12 @@ if not auth_log.handlers:  # idempotente se reimportado
         auth_log.addHandler(logging.StreamHandler())
 
 FTP_UPLOAD_DIR = "/var/ftp/uploads"
+# Diretório compartilhado pelas origens de firmware (mirror FTP — v2.2.0).
+# Chroot read+write das origens. Arquivos colocados aqui pelo painel (via
+# router /api/firmwares) ficam catalogados em DB. Arquivos subidos via FTP
+# por origens ficam "órfãos" — aparecem no painel como uploads externos
+# pra admin promover ou deletar.
+FTP_FIRMWARE_DIR = "/var/firmware"
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB — para devices que enviam .cfg em texto
 # UNM2000 (NMS Fiberhome) envia o backup do banco como .zip (~3 MB no doc oficial,
 # mas pode crescer com mais OLTs gerenciadas). 50 MB cobre caso real e ainda fica
@@ -120,47 +127,121 @@ def _ip_match(remote_ip: str, allowed_cidr: str | None) -> bool:
         return False
 
 
+# Cache thread-local pra discriminar o tipo de user logado entre
+# validate_authentication e os métodos chamados por path (has_perm,
+# get_home_dir, get_perms). pyftpdlib chama os 3 últimos sem passar o
+# objeto handler, então não dá pra olhar handler.remote_ip ali — usamos
+# o cache populado no auth pra responder coerentemente.
+#
+# Estrutura: {username: "device" | "firmware_origem"}
+_USER_TIPO_CACHE: dict[str, str] = {}
+
+
 class DBAuthorizer(DummyAuthorizer):
-    """Authorizer baseado em DB. As permissões são fixas em 'w' (apenas STOR)."""
+    """Authorizer baseado em DB. Suporta DOIS tipos de credencial:
+
+    1. Device.ftp_user (push de backup, write-only, chroot por device)
+    2. FirmwareOrigem.usuario_ftp (mirror firmware, read+write, chroot compartilhado)
+
+    Ordem de lookup: primeiro tenta Device (fluxo legado, IP whitelist).
+    Se não acha, tenta FirmwareOrigem (sem whitelist de IP). Falha em
+    ambos → AuthenticationFailed + audit.
+    """
 
     def validate_authentication(self, username, password, handler):
         ip = handler.remote_ip
         with SyncSessionLocal() as db:
+            # ─── Tentativa 1: Device push (fluxo legado) ───
             dev = db.execute(
                 select(Device).where(Device.ftp_user == username)
             ).scalar_one_or_none()
-            # Aceita protocolo ftp_push (fluxo push original) E api (Mikrotik
-            # que recebe /tool/fetch upload do backend pra empurrar o /export).
-            # RouterOS não tem mode=sftp em /tool/fetch — só ftp/http/https/scp —
-            # então Plano C usa FTP plain em vez de SFTP.
-            protocolos_aceitos = (Protocolo.ftp_push, Protocolo.api)
-            if not dev or not dev.ativo or dev.protocolo not in protocolos_aceitos or not dev.ftp_senha_enc:
-                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", ip, username)
-                auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=None,
-                                      detalhe="usuário FTP inexistente ou device desabilitado",
-                                      protocolo="FTP")
-                raise AuthenticationFailed("Authentication failed.")
-            try:
-                senha_real = decrypt(dev.ftp_senha_enc)
-            except Exception:
-                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=decrypt_error", ip, username)
-                raise AuthenticationFailed("Authentication failed.")
-            if password != senha_real:
-                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
-                auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
-                                      detalhe="senha incorreta", protocolo="FTP")
-                raise AuthenticationFailed("Authentication failed.")
-            # Whitelist só pra ftp_push (admin configura CIDR). Pra protocolo=api
-            # pula: backend dispara o upload sob demanda, cred única por device
-            # já garante autorização.
-            if dev.protocolo == Protocolo.ftp_push and not _ip_match(ip, dev.ftp_origem_cidr):
-                auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
-                auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
-                                      detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}",
-                                      protocolo="FTP")
-                raise AuthenticationFailed("Authentication failed.")
+            if dev:
+                self._auth_device(db, dev, password, ip, username)
+                _USER_TIPO_CACHE[username] = "device"
+                return
+
+            # ─── Tentativa 2: FirmwareOrigem (mirror) ───
+            origem = db.execute(
+                select(FirmwareOrigem).where(FirmwareOrigem.usuario_ftp == username)
+            ).scalar_one_or_none()
+            if origem:
+                self._auth_firmware_origem(db, origem, password, ip, username)
+                _USER_TIPO_CACHE[username] = "firmware_origem"
+                return
+
+            # ─── Nenhum dos dois ───
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=user_inexistente", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=None,
+                                  detalhe="usuário FTP inexistente",
+                                  protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+
+    def _auth_device(self, db, dev, password, ip, username):
+        """Auth de Device push — fluxo original, write-only + whitelist CIDR."""
+        # Aceita protocolo ftp_push (fluxo push original) E api (Mikrotik
+        # que recebe /tool/fetch upload do backend pra empurrar o /export).
+        # RouterOS não tem mode=sftp em /tool/fetch — só ftp/http/https/scp —
+        # então Plano C usa FTP plain em vez de SFTP.
+        protocolos_aceitos = (Protocolo.ftp_push, Protocolo.api)
+        if not dev.ativo or dev.protocolo not in protocolos_aceitos or not dev.ftp_senha_enc:
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=device_desabilitado", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                  detalhe="device desabilitado ou protocolo inválido",
+                                  protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+        try:
+            senha_real = decrypt(dev.ftp_senha_enc)
+        except Exception:
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=decrypt_error", ip, username)
+            raise AuthenticationFailed("Authentication failed.")
+        if password != senha_real:
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                  detalhe="senha incorreta", protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+        # Whitelist só pra ftp_push (admin configura CIDR). Pra protocolo=api
+        # pula: backend dispara o upload sob demanda, cred única por device
+        # já garante autorização.
+        if dev.protocolo == Protocolo.ftp_push and not _ip_match(ip, dev.ftp_origem_cidr):
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=ip_fora_whitelist", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=dev.empresa_id,
+                                  detalhe=f"IP {ip} fora da whitelist {dev.ftp_origem_cidr}",
+                                  protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+
+    def _auth_firmware_origem(self, db, origem, password, ip, username):
+        """Auth de FirmwareOrigem — sem whitelist CIDR, mas precisa estar ativa."""
+        if not origem.ativo or not origem.senha_ftp_enc:
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=origem_desativada", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=origem.empresa_id,
+                                  detalhe="origem firmware desativada",
+                                  protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+        try:
+            senha_real = decrypt(origem.senha_ftp_enc)
+        except Exception:
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=decrypt_error", ip, username)
+            raise AuthenticationFailed("Authentication failed.")
+        if password != senha_real:
+            auth_log.warning("AUTH_FAIL ip=%s user=%s reason=senha_invalida", ip, username)
+            auditar_acesso_negado(db, ip, alvo_nome=username, empresa_id=origem.empresa_id,
+                                  detalhe="senha incorreta (origem firmware)", protocolo="FTP")
+            raise AuthenticationFailed("Authentication failed.")
+        # Telemetria — atualiza ultimo_acesso da origem
+        try:
+            origem.ultimo_acesso_em = datetime.now(timezone.utc)
+            origem.ultimo_ip = ip
+            db.commit()
+        except Exception:
+            log.exception("falha ao atualizar ultimo_acesso da origem firmware")
+            db.rollback()
 
     def get_home_dir(self, username):
+        # Origens de firmware: chroot compartilhado em /var/firmware/.
+        # Devices push: chroot isolado por user.
+        if _USER_TIPO_CACHE.get(username) == "firmware_origem":
+            os.makedirs(FTP_FIRMWARE_DIR, exist_ok=True)
+            return FTP_FIRMWARE_DIR
         d = os.path.join(FTP_UPLOAD_DIR, username)
         os.makedirs(d, exist_ok=True)
         return d
@@ -169,7 +250,12 @@ class DBAuthorizer(DummyAuthorizer):
         return True
 
     def has_perm(self, username, perm, path=None):
-        # Permissões: 'e' (changedir), 'l' (list), 'w' (STOR/STOU/APPE).
+        # Origem firmware: 'e' (cd), 'l' (list), 'r' (RETR), 'w' (STOR).
+        # NÃO inclui 'd' (DELE) — origem não pode apagar firmwares; só admin
+        # via painel. NÃO inclui 'f' (rename), 'm' (MKD).
+        if _USER_TIPO_CACHE.get(username) == "firmware_origem":
+            return perm in ("e", "l", "r", "w")
+        # Device push: 'e' (changedir), 'l' (list), 'w' (STOR/STOU/APPE).
         # Equipamentos legados (Huawei, Fiberhome) fazem CWD/LIST antes de
         # abrir o arquivo. Sem 'e' e 'l' o upload aborta.
         # NÃO inclui 'r' (RETR) — atacante com credencial não baixa nada.
@@ -177,12 +263,18 @@ class DBAuthorizer(DummyAuthorizer):
         return perm in ("e", "l", "w")
 
     def get_perms(self, username):
+        if _USER_TIPO_CACHE.get(username) == "firmware_origem":
+            return "elrw"
         return "elw"
 
     def get_msg_login(self, username):
+        if _USER_TIPO_CACHE.get(username) == "firmware_origem":
+            return "Login OK. Acesso ao mirror de firmwares (read+write)."
         return "Login OK. Envie o arquivo de configuração."
 
     def get_msg_quit(self, username):
+        if _USER_TIPO_CACHE.get(username) == "firmware_origem":
+            return "Encerrando sessão de firmware."
         return "Backup recebido. Encerrando."
 
     def impersonate_user(self, username, password):
@@ -197,6 +289,12 @@ class NexusFTPHandler(FTPHandler):
     via setting do servidor; aqui só processamos depois do arquivo no disco."""
 
     def on_file_received(self, filepath):
+        # Discrimina por tipo cacheado no auth — origem firmware NÃO entra no
+        # fluxo de push de backup (não vira row em backups, não dispara dedupe).
+        # Arquivo fica no /var/firmware/ pra admin ver como "órfão" no painel.
+        if _USER_TIPO_CACHE.get(self.username) == "firmware_origem":
+            self._processar_upload_firmware(filepath)
+            return
         try:
             self._processar_upload(filepath)
         except Exception as e:
@@ -220,6 +318,59 @@ class NexusFTPHandler(FTPHandler):
                 os.unlink(filepath)
             except OSError:
                 pass
+
+    def on_file_sent(self, filepath):
+        """Hook após RETR completo — registra download de firmware no audit."""
+        if _USER_TIPO_CACHE.get(self.username) != "firmware_origem":
+            return
+        try:
+            nome = os.path.basename(filepath)
+            tamanho = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            with SyncSessionLocal() as db:
+                origem = db.execute(
+                    select(FirmwareOrigem).where(FirmwareOrigem.usuario_ftp == self.username)
+                ).scalar_one_or_none()
+                emp = origem.empresa_id if origem else None
+                db.add(Atividade(
+                    tipo=TipoAtividade.firmware_baixado,
+                    usuario_id=None,
+                    usuario_nome=f"ftp:{self.username}",
+                    empresa_id=emp,
+                    ip=self.remote_ip,
+                    alvo_tipo="firmware",
+                    alvo_nome=nome,
+                    detalhe=f"FTP · download · {_humanizar_bytes_local(tamanho)}",
+                ))
+                db.commit()
+        except Exception:
+            log.exception("Audit firmware_baixado falhou — segue silencioso")
+
+    def _processar_upload_firmware(self, filepath):
+        """Upload feito por origem firmware — fica como arquivo órfão no diretório.
+        Registra atividade e NÃO apaga o arquivo (admin promove/deleta pelo painel)."""
+        try:
+            nome = os.path.basename(filepath)
+            tamanho = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+            with SyncSessionLocal() as db:
+                origem = db.execute(
+                    select(FirmwareOrigem).where(FirmwareOrigem.usuario_ftp == self.username)
+                ).scalar_one_or_none()
+                emp = origem.empresa_id if origem else None
+                db.add(Atividade(
+                    tipo=TipoAtividade.firmware_enviado,
+                    usuario_id=None,
+                    usuario_nome=f"ftp:{self.username}",
+                    empresa_id=emp,
+                    ip=self.remote_ip,
+                    alvo_tipo="firmware",
+                    alvo_nome=nome,
+                    detalhe=f"FTP · upload externo · {_humanizar_bytes_local(tamanho)}",
+                ))
+                db.commit()
+            log.info("FTP firmware: upload de %s (%s) por %s @ %s — ficou como órfão",
+                     nome, _humanizar_bytes_local(tamanho), self.username, self.remote_ip)
+        except Exception:
+            log.exception("Falha ao registrar upload órfão de firmware")
 
     def on_incomplete_file_received(self, filepath):
         try:

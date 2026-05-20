@@ -73,6 +73,15 @@ class TipoAtividade(str, enum.Enum):
     # no parser binário, OSError, etc). Distinto de ftp_acesso_negado: nesse
     # caso a credencial foi aceita mas o upload em si quebrou.
     ftp_backup_falha = "ftp_backup_falha"
+    # Firmware Mirror (v2.2.0): mirror FTP de firmwares pra devices baixarem
+    # via /tool fetch (Mikrotik) ou comando equivalente. Origens são credenciais
+    # FTP separadas do fluxo de push de backup — chroot em /var/firmware/.
+    firmware_baixado = "firmware_baixado"            # device baixou arquivo via FTP
+    firmware_enviado = "firmware_enviado"            # origem subiu arquivo via FTP (fica como órfão)
+    firmware_upload_painel = "firmware_upload_painel"  # admin/operador fez upload pelo painel
+    firmware_removido = "firmware_removido"
+    firmware_origem_criada = "firmware_origem_criada"
+    firmware_origem_removida = "firmware_origem_removida"
 
 class Empresa(Base):
     __tablename__ = "empresas"
@@ -294,6 +303,76 @@ class OperacaoMassaLog(Base):
     falhas = Column(Integer, nullable=False, default=0)
     iniciado_em = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     concluido_em = Column(DateTime(timezone=True), nullable=True)
+
+
+class Firmware(Base):
+    """Firmware armazenado pra ser baixado por devices via FTP mirror (v2.2.0).
+
+    Arquivo físico fica em /var/firmware/<arquivo_nome>. O nome no disco é
+    sanitizado pelo router (sem path traversal, sem espaços problemáticos) e
+    pode coincidir ou divergir do nome original do upload (em caso de colisão
+    o router adiciona sufixo). `nome` é o display amigável que o admin
+    visualiza/digita; `arquivo_nome` é o que device baixa via FTP.
+
+    Não tem dedupe por sha256 — admin pode propositalmente subir 2 versões
+    do mesmo arquivo (ex.: testando rollback). Cleanup é manual via DELETE.
+    """
+    __tablename__ = "firmwares"
+    id = Column(Integer, primary_key=True)
+    nome = Column(String(200), nullable=False)            # display amigável
+    descricao = Column(Text, nullable=True)
+    # Nome do arquivo no disco /var/firmware/. Único pra evitar sobrescrita.
+    arquivo_nome = Column(String(255), nullable=False, unique=True)
+    tamanho_bytes = Column(Integer, nullable=False)
+    # SHA256 calculado durante upload — útil pra device validar integridade
+    # depois do download (ex.: Mikrotik tem /file/hash). Hex lowercase.
+    sha256 = Column(String(64), nullable=False)
+    # Metadados opcionais — fabricante/modelo/versão pra organizar catálogo.
+    # Não são enums pra permitir valores livres (firmware de fornecedor
+    # custom, beta, etc.) sem precisar migração.
+    fabricante = Column(String(40), nullable=True)
+    modelo_alvo = Column(String(100), nullable=True)
+    versao = Column(String(40), nullable=True)
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    # Snapshot do criador (sobrevive a delete do user). NULL = upload externo
+    # via FTP que foi promovido depois (caso não usado hoje, mas reservado).
+    criado_por_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    criado_por_nome = Column(String(120), nullable=False)
+
+
+class FirmwareOrigem(Base):
+    """Credencial FTP que um cliente/device usa pra baixar firmwares.
+
+    O username é gerado pelo backend (fwm_NNNNN) e a senha é mostrada UMA
+    única vez no momento da criação/regeneração (alfanumérica, 24 chars).
+    Senha é armazenada cifrada com Fernet — autorização em runtime decrypt+match.
+
+    Diferente de Device.ftp_user (push de backup, write-only, chroot por
+    device), a origem firmware tem chroot compartilhado em /var/firmware/
+    com perms `elrw` (list + read + write). Uploads externos via FTP ficam
+    como arquivos órfãos no painel (admin promove ou deleta).
+
+    Sem whitelist de CIDR — geralmente quem precisa de firmware está em
+    redes dinâmicas (ISPs, NATs móveis). Defesa é fail2ban + senha 24 chars
+    + flag `ativo` que admin pode desligar pra revogar acesso.
+    """
+    __tablename__ = "firmware_origens"
+    id = Column(Integer, primary_key=True)
+    nome = Column(String(120), nullable=False)            # display amigável (ex.: "Filial Brasília")
+    descricao = Column(Text, nullable=True)
+    usuario_ftp = Column(String(64), nullable=False, unique=True)
+    senha_ftp_enc = Column(Text, nullable=False)          # Fernet
+    ativo = Column(Boolean, nullable=False, default=True)
+    # Empresa opcional — origem pode ser global (NULL) ou amarrada a uma
+    # empresa específica. Sem efeito no FTP auth atualmente (todas as origens
+    # veem o mesmo /var/firmware/), só pra UI segmentar quem cadastrou.
+    empresa_id = Column(Integer, ForeignKey("empresas.id", ondelete="SET NULL"), nullable=True)
+    # Telemetria: último uso do FTP (atualizado em validate_authentication ok)
+    ultimo_acesso_em = Column(DateTime(timezone=True), nullable=True)
+    ultimo_ip = Column(String(45), nullable=True)
+    criado_em = Column(DateTime(timezone=True), server_default=func.now())
+    criado_por_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    criado_por_nome = Column(String(120), nullable=False)
 
 
 class LogScheduler(Base):

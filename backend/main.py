@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from database import engine, Base
-from routers import auth, users, devices, backups, settings, logs, empresas, atividades, version, info, mikrotik_bulk
+from routers import auth, users, devices, backups, settings, logs, empresas, atividades, version, info, mikrotik_bulk, firmwares
 from version import APP_VERSION
 from services.scheduler import iniciar_scheduler, scheduler
 from services.ftp_server import iniciar_ftp_server, parar_ftp_server
@@ -35,7 +35,10 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
         for ev in ("ftp_backup_recebido", "ftp_volume_alto", "ftp_acesso_negado",
-                   "ftp_backup_falha"):
+                   "ftp_backup_falha",
+                   # Firmware Mirror FTP (v2.2.0)
+                   "firmware_baixado", "firmware_enviado", "firmware_upload_painel",
+                   "firmware_removido", "firmware_origem_criada", "firmware_origem_removida"):
             try:
                 await conn.execute(text(f"ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS '{ev}'"))
             except Exception:
@@ -463,6 +466,7 @@ app.include_router(atividades.router)
 app.include_router(version.router)
 app.include_router(info.router)
 app.include_router(mikrotik_bulk.router)
+app.include_router(firmwares.router)
 
 @app.get("/")
 async def root():

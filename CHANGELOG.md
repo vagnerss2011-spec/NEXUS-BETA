@@ -12,6 +12,58 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.2.0] - 2026-05-19
+
+### Adicionado — Mirror FTP de firmwares (aba "Firmwares" no painel)
+
+Nova feature pra usar o NEXUS BACKUP como **mirror de firmwares**: admin sobe firmwares pelo painel, gera credenciais FTP por "origem" (filial, NOC, parceiro, etc.), e devices remotos baixam via `/tool fetch` (Mikrotik) ou comando equivalente em outros fabricantes.
+
+**Backend:**
+
+- 2 tabelas novas: `firmwares` (catálogo com nome/fabricante/modelo/versão/sha256/tamanho) e `firmware_origens` (credenciais FTP com senha cifrada via Fernet).
+- 6 valores novos no enum `TipoAtividade` pra audit: `firmware_baixado`, `firmware_enviado`, `firmware_upload_painel`, `firmware_removido`, `firmware_origem_criada`, `firmware_origem_removida`.
+- Router `routers/firmwares.py` com endpoints REST:
+  - `POST /api/firmwares/upload` — multipart streaming pro disco (chunks de 4MB), SHA256 calculado on-the-fly. Sem limite explícito de tamanho (timeout do axios estendido pra 60min no frontend pra cobrir firmwares de 1-2GB).
+  - `GET/PATCH/DELETE /api/firmwares/{id}` + `GET /api/firmwares/{id}/download`.
+  - `GET /api/firmwares/orfaos` — lista arquivos físicos em `/var/firmware/` **sem** row correspondente no DB (uploads via FTP de origens, perm `w`). Endpoints separados pra **promover** (`POST /orfaos/{nome}/promover` com metadados) ou **deletar** (`DELETE /orfaos/{nome}`).
+  - CRUD completo de origens: `GET/POST /firmware-origens`, `PATCH/DELETE /firmware-origens/{id}`, `POST /firmware-origens/{id}/regen-senha`. Senha gerada (24 chars alfanuméricos, ~143 bits) retornada em texto puro apenas no momento da criação/regeneração via `FirmwareOrigemCredencial`.
+- `services/ftp_server.py` ganhou **discriminação por tipo de credencial**:
+  - `Device.ftp_user` (fluxo legado de push de backup) — write-only, chroot por device, whitelist CIDR.
+  - `FirmwareOrigem.usuario_ftp` (novo) — perms `elrw` (list+read+write), chroot compartilhado em `/var/firmware/`, sem whitelist CIDR (defesa por senha forte + fail2ban + flag `ativo`).
+  - Hook `on_file_received` desvia upload de origem firmware pra `_processar_upload_firmware` que só registra atividade e NÃO apaga o arquivo — fica como órfão pro admin promover/deletar pelo painel.
+  - Hook novo `on_file_sent` registra `firmware_baixado` toda vez que uma origem completa um RETR — observabilidade pra auditoria.
+- `firmware_origens.ultimo_acesso_em` + `ultimo_ip` atualizados em todo auth bem-sucedido — telemetria leve pra admin saber quem tá usando o quê.
+
+**Frontend:**
+
+- Página nova [Firmwares.jsx](frontend/src/pages/Firmwares.jsx) com 2 abas:
+  - **Arquivos** — tabela de firmwares catalogados (nome, arquivo, tamanho, SHA256 truncado, fabricante/modelo/versão, criador) + ações download/delete. Seção separada amarela pra **uploads externos** (órfãos) com ações promover/deletar.
+  - **Origens FTP** — tabela de credenciais (nome, user, status ativo/inativo, último acesso/IP, criado por) + ações toggle ativo, regerar senha, excluir.
+- Modal de upload com barra de progresso (`onUploadProgress` do axios), validação client-side e datalist de fabricantes comuns.
+- Modal de credencial: mostra `usuario_ftp` + `senha_ftp` (toggle eye/eye-off) com botões de copy, banner amarelo avisando que a senha não é recuperável. Aparece **uma única vez** após criar/regerar.
+- Card "Exemplo de uso no device" no topo da página: comando `/tool fetch ftp://...` dinamicamente preenchido com o IP do `FTP_MASQUERADE_ADDRESS` (via `/api/info/server`) e o `usuario_ftp` da primeira origem ativa. Botão de copy. Se o `.env` não tem o IP, mostra placeholder visível + aviso.
+- Item "Firmwares" no Sidebar entre "Operações" e "Usuários" (ícone HardDrive). Visível pra todos os roles autenticados — viewer só lista/baixa, demais roles podem fazer upload e CRUD origem (gate fino no router via `require_role`).
+
+**Permissões:**
+
+| Ação | Roles |
+|---|---|
+| Listar firmwares + download via painel | qualquer autenticado |
+| Upload/edit/delete firmware + promover/deletar órfão | `admin`, `admin_empresa`, `operador` |
+| CRUD origens FTP (criar, ativar/desativar, regerar senha, excluir) | `admin`, `admin_empresa` (operador NÃO — é credencial sensível) |
+| Acesso FTP via mirror (download/upload de firmwares) | origem FTP autenticada, somente se `ativo=true` |
+
+**Infra:**
+
+- Volume novo no `docker-compose.yml`: `./infra/firmware:/var/firmware` (persistência entre rebuilds). Dimensionar o disco do host conforme catálogo previsto.
+- Portas FTP **sem mudança** — reaproveita 21 (control) + 30000-30099 (PASV) já mapeadas pro fluxo de push de backup.
+
+**Notas operacionais:**
+
+- Servidores existentes precisam **redeploy** (`git pull && docker compose up -d --build`) pra subir o backend novo, criar as 2 tabelas (idempotente via `Base.metadata.create_all`) e ganhar a aba no painel.
+- Pra Mikrotiks baixarem: `/tool fetch url="ftp://fwm_00001:SENHA@<IP>/firmware.npk" mode=ftp` (comando já mostrado no card de exemplo da página). Outros fabricantes: comando equivalente do fabricante.
+- Uploads externos (origem com perm `w` subindo arquivo) ficam como órfãos no painel — admin decide promover (cadastrar metadados) ou apagar.
+
 ## [2.1.6] - 2026-05-15
 
 ### Corrigido — `install-nexus-backup.sh` Passo 7 UFW

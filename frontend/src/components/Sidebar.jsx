@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X, Sparkles, Wrench } from 'lucide-react'
+import { LayoutDashboard, Router, Archive, Users, LogOut, Settings, ScrollText, Building2, Repeat, X, Sparkles, Wrench, HardDrive } from 'lucide-react'
 import api, { getCurrentEmpresa, setCurrentEmpresa } from '../services/api'
 import { APP_VERSION } from '../version'
 
@@ -16,6 +16,10 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
   // Operações em massa: admin/admin_empresa/operador (mesmo nível do "criar device").
   // Viewer fica de fora pois TODA execução muda estado em N devices ao mesmo tempo.
   const canSeeOperacoes = ['admin', 'admin_empresa', 'operador'].includes(user.role)
+  // Firmwares: aba sempre visível pra todos os roles autenticados — viewer só
+  // lista/baixa, demais roles podem fazer upload/CRUD origem. O gate fino fica
+  // na própria página, mas o link aparece sempre porque até viewer pode usar.
+  const canSeeFirmwares = !!user.role
 
   const links = [
     ...(isMaster ? [{ to: '/empresas', icon: Building2, label: 'Empresas' }] : []),
@@ -23,6 +27,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
     { to: '/devices', icon: Router, label: 'Dispositivos' },
     { to: '/backups', icon: Archive, label: 'Backups' },
     ...(canSeeOperacoes ? [{ to: '/operacoes', icon: Wrench, label: 'Operações' }] : []),
+    ...(canSeeFirmwares ? [{ to: '/firmwares', icon: HardDrive, label: 'Firmwares' }] : []),
     ...(canSeeUsers ? [{ to: '/users', icon: Users, label: 'Usuários' }] : []),
     ...(canSeeLogs ? [{ to: '/logs', icon: ScrollText, label: 'Logs' }] : []),
     { to: '/novidades', icon: Sparkles, label: 'Novidades' },

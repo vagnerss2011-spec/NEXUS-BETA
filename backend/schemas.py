@@ -307,6 +307,83 @@ class DbExportConfigUpdate(BaseModel):
     db_export_remote_hora: Optional[int] = None
     db_export_remote_minute: Optional[int] = None
 
+# ===== Firmware Mirror FTP (v2.2.0) =====
+
+class FirmwareOut(BaseModel):
+    """Metadados de firmware armazenado no /var/firmware/.
+
+    Não devolve o conteúdo do arquivo — download é endpoint separado.
+    """
+    id: int
+    nome: str
+    descricao: Optional[str] = None
+    arquivo_nome: str
+    tamanho_bytes: int
+    sha256: str
+    fabricante: Optional[str] = None
+    modelo_alvo: Optional[str] = None
+    versao: Optional[str] = None
+    criado_em: datetime
+    criado_por_nome: str
+    class Config:
+        from_attributes = True
+
+
+class FirmwareUpdate(BaseModel):
+    """Update de metadados (não troca arquivo — re-upload é delete + create)."""
+    nome: Optional[str] = None
+    descricao: Optional[str] = None
+    fabricante: Optional[str] = None
+    modelo_alvo: Optional[str] = None
+    versao: Optional[str] = None
+
+
+class FirmwareOrfaoOut(BaseModel):
+    """Arquivo presente em /var/firmware/ mas SEM row na tabela firmwares.
+
+    Foi subido via FTP por uma origem (write permitido) e ainda não foi
+    promovido ou deletado pelo admin. UI mostra em seção separada de
+    'Uploads externos' pra ação manual.
+    """
+    arquivo_nome: str
+    tamanho_bytes: int
+    modificado_em: datetime
+
+
+class FirmwareOrigemCreate(BaseModel):
+    nome: str
+    descricao: Optional[str] = None
+    empresa_id: Optional[int] = None  # NULL = global (visível a todos os admins master)
+
+
+class FirmwareOrigemUpdate(BaseModel):
+    nome: Optional[str] = None
+    descricao: Optional[str] = None
+    ativo: Optional[bool] = None
+
+
+class FirmwareOrigemOut(BaseModel):
+    """Listagem/leitura — NÃO inclui senha (cifrada no banco)."""
+    id: int
+    nome: str
+    descricao: Optional[str] = None
+    usuario_ftp: str
+    ativo: bool
+    empresa_id: Optional[int] = None
+    ultimo_acesso_em: Optional[datetime] = None
+    ultimo_ip: Optional[str] = None
+    criado_em: datetime
+    criado_por_nome: str
+    class Config:
+        from_attributes = True
+
+
+class FirmwareOrigemCredencial(FirmwareOrigemOut):
+    """Retornado SOMENTE no momento da criação/regeneração da senha — senha
+    em texto puro, mostrada uma vez. Frontend deve forçar copy + warn."""
+    senha_ftp: str
+
+
 # Atividade (auditoria)
 class AtividadeOut(BaseModel):
     id: int
