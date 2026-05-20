@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   HardDrive, Upload, Download, Trash2, KeyRound, RefreshCw, Plus,
   Copy, Check, Eye, EyeOff, AlertTriangle, FileQuestion, Power, Loader2,
-  Server, Info, X,
+  Server, Info, X, Edit3,
 } from 'lucide-react'
 import api, { getUser } from '../services/api'
 
@@ -220,31 +220,60 @@ function CredencialModal({ credencial, onClose }) {
 }
 
 // ────────────────────────── Modal de criar/editar origem ──────────────────────────
-function OrigemModal({ open, onClose, onSucesso }) {
+// origem=null → criar (gera credencial); origem=obj → editar (não troca senha).
+function OrigemModal({ open, onClose, onSucesso, origem }) {
+  const editando = !!origem
   const [nome, setNome] = useState('')
   const [descricao, setDescricao] = useState('')
-  const [origemCidr, setOrigemCidr] = useState('')
+  // Lista de IPs/CIDRs em caixas separadas. Backend aceita "a, b, c" — aqui
+  // a UI quebra em campos individuais (add/remove). Sempre tem ao menos 1.
+  const [cidrs, setCidrs] = useState([''])
   const [enviando, setEnviando] = useState(false)
   const [erro, setErro] = useState('')
 
+  // Preenche/reseta quando o modal abre (ou troca de origem). useEffect porque
+  // o componente não desmonta entre aberturas — sem isso ficaria o estado velho.
+  useEffect(() => {
+    if (!open) return
+    setNome(origem?.nome || '')
+    setDescricao(origem?.descricao || '')
+    const lista = (origem?.origem_cidr || '')
+      .split(',').map(s => s.trim()).filter(Boolean)
+    setCidrs(lista.length ? lista : [''])
+    setErro('')
+  }, [open, origem])
+
   if (!open) return null
+
+  const setCidr = (i, v) => setCidrs(prev => prev.map((c, idx) => idx === i ? v : c))
+  const addCidr = () => setCidrs(prev => [...prev, ''])
+  const removeCidr = (i) => setCidrs(prev => prev.length === 1 ? [''] : prev.filter((_, idx) => idx !== i))
 
   async function submit(e) {
     e.preventDefault()
     setErro('')
     if (!nome.trim()) { setErro('Nome é obrigatório'); return }
+    const cidrJoin = cidrs.map(c => c.trim()).filter(Boolean).join(', ')
     setEnviando(true)
     try {
-      const r = await api.post('/firmware-origens', {
-        nome: nome.trim(),
-        descricao: descricao.trim() || null,
-        origem_cidr: origemCidr.trim() || null,
-      })
-      onSucesso(r.data)   // entrega credencial com senha pra exibir
+      if (editando) {
+        await api.patch(`/firmware-origens/${origem.id}`, {
+          nome: nome.trim(),
+          descricao: descricao.trim() || null,
+          origem_cidr: cidrJoin,   // "" limpa a whitelist
+        })
+        onSucesso(null)            // edição não retorna credencial
+      } else {
+        const r = await api.post('/firmware-origens', {
+          nome: nome.trim(),
+          descricao: descricao.trim() || null,
+          origem_cidr: cidrJoin || null,
+        })
+        onSucesso(r.data)          // entrega credencial com senha pra exibir
+      }
       onClose()
-      setNome(''); setDescricao(''); setOrigemCidr('')
     } catch (e) {
-      setErro(e.response?.data?.detail || e.message || 'Falha ao criar origem')
+      setErro(e.response?.data?.detail || e.message || 'Falha ao salvar origem')
     } finally {
       setEnviando(false)
     }
@@ -252,9 +281,12 @@ function OrigemModal({ open, onClose, onSucesso }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={enviando ? undefined : onClose}>
-      <div className="bg-slate-800 rounded-lg border border-slate-700 w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-slate-700">
-          <h3 className="font-semibold text-white flex items-center gap-2"><Plus size={18} /> Nova origem FTP</h3>
+      <div className="bg-slate-800 rounded-lg border border-slate-700 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-slate-700 sticky top-0 bg-slate-800">
+          <h3 className="font-semibold text-white flex items-center gap-2">
+            {editando ? <Edit3 size={18} /> : <Plus size={18} />}
+            {editando ? `Editar origem — ${origem.usuario_ftp}` : 'Nova origem FTP'}
+          </h3>
           <button onClick={onClose} disabled={enviando} className="text-slate-400 hover:text-white"><X size={18} /></button>
         </div>
         <form onSubmit={submit} className="p-4 space-y-3">
@@ -272,17 +304,34 @@ function OrigemModal({ open, onClose, onSucesso }) {
           </div>
           <div>
             <label className="text-xs text-slate-400 block mb-1">IP(s) de origem — whitelist (opcional)</label>
-            <input value={origemCidr} onChange={e => setOrigemCidr(e.target.value)} disabled={enviando}
-              className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-sm text-white font-mono"
-              placeholder="ex: 200.1.2.3  ou  200.1.2.0/24, 187.4.5.6" />
+            <div className="space-y-2">
+              {cidrs.map((c, i) => (
+                <div key={i} className="flex gap-2">
+                  <input value={c} onChange={e => setCidr(i, e.target.value)} disabled={enviando}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-sm text-white font-mono"
+                    placeholder="ex: 200.1.2.3  ou  10.0.0.0/24" />
+                  <button type="button" onClick={() => removeCidr(i)} disabled={enviando}
+                    title="Remover este IP"
+                    className="px-2.5 py-1.5 bg-slate-700 hover:bg-red-500/30 text-slate-300 hover:text-red-300 rounded">
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addCidr} disabled={enviando}
+              className="mt-2 text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1">
+              <Plus size={13} /> Adicionar outro IP/CIDR
+            </button>
             <p className="text-[11px] text-slate-500 mt-1">
-              Se preenchido, o FTP só aceita conexões desses IPs. Vazio = qualquer IP (só a senha protege). Libere o mesmo IP no firewall do servidor.
+              Se preenchido, o FTP só aceita conexões desses IPs. Vazio = qualquer IP (só a senha protege). Libere o(s) mesmo(s) IP(s) no firewall do servidor.
             </p>
           </div>
-          <p className="text-xs text-slate-500 flex items-start gap-1.5">
-            <Info size={13} className="shrink-0 mt-0.5" />
-            O usuário (formato <code className="bg-slate-900 px-1 rounded">fwm_NNNNN</code>) e a senha de 24 chars serão gerados automaticamente.
-          </p>
+          {!editando && (
+            <p className="text-xs text-slate-500 flex items-start gap-1.5">
+              <Info size={13} className="shrink-0 mt-0.5" />
+              O usuário (formato <code className="bg-slate-900 px-1 rounded">fwm_NNNNN</code>) e a senha de 24 chars serão gerados automaticamente.
+            </p>
+          )}
           {erro && (
             <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded p-2 flex gap-2">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" /> <span>{erro}</span>
@@ -293,8 +342,8 @@ function OrigemModal({ open, onClose, onSucesso }) {
               className="px-3 py-1.5 text-sm text-slate-300 hover:text-white">Cancelar</button>
             <button type="submit" disabled={enviando}
               className="px-4 py-1.5 text-sm bg-sky-500 hover:bg-sky-600 text-white rounded font-medium flex items-center gap-1.5 disabled:opacity-60">
-              {enviando ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-              Criar e gerar credencial
+              {enviando ? <Loader2 size={14} className="animate-spin" /> : (editando ? <Edit3 size={14} /> : <KeyRound size={14} />)}
+              {editando ? 'Salvar' : 'Criar e gerar credencial'}
             </button>
           </div>
         </form>
@@ -362,7 +411,7 @@ export default function Firmwares() {
   const [origens, setOrigens] = useState([])
   const [carregando, setCarregando] = useState(true)
   const [showUpload, setShowUpload] = useState(false)
-  const [showOrigem, setShowOrigem] = useState(false)
+  const [origemModal, setOrigemModal] = useState({ open: false, origem: null })
   const [credencial, setCredencial] = useState(null)
 
   async function carregar() {
@@ -655,7 +704,7 @@ export default function Firmwares() {
         <div className="space-y-4">
           {podeCRUDOrigem && (
             <div className="flex justify-end">
-              <button onClick={() => setShowOrigem(true)}
+              <button onClick={() => setOrigemModal({ open: true, origem: null })}
                 className="px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded font-medium text-sm flex items-center gap-1.5">
                 <Plus size={14} /> Nova origem
               </button>
@@ -720,6 +769,11 @@ export default function Firmwares() {
                               className="p-1.5 text-sky-400 hover:bg-slate-700 rounded">
                               <KeyRound size={14} />
                             </button>
+                            <button onClick={() => setOrigemModal({ open: true, origem: o })}
+                              title="Editar (nome, descrição, IPs)"
+                              className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded">
+                              <Edit3 size={14} />
+                            </button>
                             <button onClick={() => toggleAtivo(o)}
                               title={o.ativo ? 'Desativar' : 'Ativar'}
                               className={`p-1.5 hover:bg-slate-700 rounded ${o.ativo ? 'text-emerald-400' : 'text-slate-500'}`}>
@@ -749,7 +803,12 @@ export default function Firmwares() {
 
       {/* Modals */}
       <UploadModal open={showUpload} onClose={() => setShowUpload(false)} onSucesso={carregar} />
-      <OrigemModal open={showOrigem} onClose={() => setShowOrigem(false)} onSucesso={(cred) => { setCredencial(cred); carregar() }} />
+      <OrigemModal
+        open={origemModal.open}
+        origem={origemModal.origem}
+        onClose={() => setOrigemModal({ open: false, origem: null })}
+        onSucesso={(cred) => { if (cred) setCredencial(cred); carregar() }}
+      />
       <CredencialModal credencial={credencial} onClose={() => setCredencial(null)} />
     </div>
   )

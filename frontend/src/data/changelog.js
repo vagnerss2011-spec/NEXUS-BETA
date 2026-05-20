@@ -15,6 +15,17 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.2.2 =====
+  {
+    data: '2026-05-20',
+    tipo: 'melhoria',
+    icone: 'HardDrive',
+    categoria: 'Firmwares',
+    titulo: 'Editar origem FTP + vários IPs na whitelist',
+    descricao:
+      'Agora dá pra editar uma origem FTP existente (nome, descrição e IPs) sem precisar excluir e recriar — basta clicar no lápis. ' +
+      'A whitelist de IP virou caixas separadas: clique em "Adicionar outro IP/CIDR" pra liberar vários endereços diferentes na mesma origem (útil pra cliente com mais de um link de saída).',
+  },
   // ===== Maio/2026 — v2.2.1 =====
   {
     data: '2026-05-19',

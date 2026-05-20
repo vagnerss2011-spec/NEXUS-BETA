@@ -12,6 +12,18 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.2.2] - 2026-05-20
+
+### Adicionado
+
+- **Editar origem FTP pelo painel.** O modal de origem agora cria E edita (antes só criava — pra mudar algo era preciso excluir e recriar, perdendo a credencial). Botão de lápis em cada linha. A edição não troca a senha (continua via "regerar").
+- **Whitelist de IP em caixas separadas (add/remove dinâmico).** Em vez de digitar IPs separados por vírgula numa única caixa, o form mostra um campo por IP/CIDR com botão "Adicionar outro IP/CIDR" e "x" pra remover. Mais claro pra clientes com vários IPs de saída (link redundante, blocos distintos). No submit os campos são unidos e enviados ao backend (que já aceitava lista). Edição carrega os IPs existentes já quebrados em caixas.
+
+### Notas
+
+- Sem mudança de backend — `PATCH /api/firmware-origens/{id}` e o parser de lista de CIDRs já existiam desde a v2.2.1. Esta tag é só UI.
+- **Estratégia de firewall confirmada (igual push FTP/SFTP):** a porta 21 fica aberta no UFW (`Anywhere`) e o controle de acesso fino é a whitelist de IP por origem (nível de aplicação) + senha de 24 chars + fail2ban. A maioria dos pushes vem de RFC1918 (rede local). O `último IP` registrado por origem (visível na tabela) serve pra identificar de onde o cliente conectou e então cadastrar na whitelist.
+
 ## [2.2.1] - 2026-05-19
 
 Refinamentos do Mirror FTP após validação real no ibiunet (download de firmware Huawei de 1.1GB).
