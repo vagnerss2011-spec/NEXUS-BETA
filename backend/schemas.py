@@ -203,6 +203,30 @@ class BackupOut(BaseModel):
 class BackupWithDevice(BackupOut):
     device: DeviceOut
 
+
+# Schema LEVE de listagem (v2.2.4) — NÃO inclui `conteudo`. A listagem de
+# backups trazia o conteúdo inline de até 200 backups (config pode ter MBs),
+# gerando payloads de dezenas de MB que travavam o frontend. Aqui só vão
+# metadados + `tamanho_bytes` (calculado via length(conteudo) no SQL, sem
+# puxar o conteúdo). O conteúdo é buscado sob demanda no preview/download.
+class BackupListItem(BaseModel):
+    id: int
+    device_id: int
+    status: str
+    erro: Optional[str] = None
+    log_scheduler_id: Optional[int] = None
+    origem: str = "manual"
+    nome_arquivo: Optional[str] = None
+    duracao_segundos: Optional[int] = None
+    criado_em: datetime
+    tamanho_bytes: Optional[int] = None  # length(conteudo) — preenchido pelo router
+    class Config:
+        from_attributes = True
+
+
+class BackupListWithDevice(BackupListItem):
+    device: DeviceOut
+
 # Schedule
 class ScheduleOut(BaseModel):
     backup_hour: int

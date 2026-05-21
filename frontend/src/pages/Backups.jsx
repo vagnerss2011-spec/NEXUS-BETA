@@ -68,6 +68,8 @@ export default function Backups() {
   const [busca, setBusca] = useState('')
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [previewConteudo, setPreviewConteudo] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [expandidos, setExpandidos] = useState(() => new Set())
   const me = JSON.parse(localStorage.getItem('user') || '{}')
   const canDelete = ['admin', 'admin_empresa'].includes(me.role)
@@ -111,6 +113,27 @@ export default function Backups() {
       load()
     } catch (err) {
       alert(`Falha ao apagar em massa: ${err?.response?.data?.detail || err.message}`)
+    }
+  }
+
+  // Abre o modal e busca o conteúdo SOB DEMANDA (a listagem não traz mais o
+  // conteúdo inline). Reusa o endpoint /download, que retorna o texto puro
+  // pra configs (o preview só é oferecido pra conteúdo texto, não UNM2000).
+  async function abrirPreview(b) {
+    setPreview(b)
+    setPreviewConteudo('')
+    setPreviewLoading(true)
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`/api/backups/${b.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setPreviewConteudo(await res.text())
+    } catch (err) {
+      setPreviewConteudo(`[erro ao carregar conteúdo: ${err.message}]`)
+    } finally {
+      setPreviewLoading(false)
     }
   }
 
@@ -182,7 +205,9 @@ export default function Backups() {
       // backups está em DESC (índice 0 = mais novo), então procuramos j > i.
       for (let i = 0; i < g.backups.length; i++) {
         const cur = g.backups[i]
-        cur.tamanho_bytes = cur.conteudo?.length ?? 0
+        // tamanho_bytes agora vem do backend (length(conteudo) calculado no SQL).
+        // A listagem não traz mais o conteúdo inline — era o que travava a página.
+        cur.tamanho_bytes = cur.tamanho_bytes ?? 0
         cur.alerta_tamanho = false
         if (cur.status !== 'sucesso' || cur.tamanho_bytes === 0) continue
         const curExt = _extOf(cur.nome_arquivo)
@@ -190,7 +215,7 @@ export default function Backups() {
           const prev = g.backups[j]
           if (prev.status !== 'sucesso') continue
           if (_extOf(prev.nome_arquivo) !== curExt) continue  // pula tipos diferentes
-          const prevSize = prev.conteudo?.length ?? 0
+          const prevSize = prev.tamanho_bytes ?? 0
           if (prevSize > 0 && cur.tamanho_bytes < ALERTA_RATIO * prevSize) {
             cur.alerta_tamanho = true
             cur.alerta_anterior_bytes = prevSize
@@ -395,7 +420,7 @@ export default function Backups() {
                                 {b.status === 'sucesso' && b.device?.tipo !== 'unm2000' && (
                                   // UNM2000 envia .zip binario + README — nao faz sentido visualizar
                                   // como texto. Mantem so o botao de download (preserva nome original).
-                                  <button onClick={() => setPreview(b)}
+                                  <button onClick={() => abrirPreview(b)}
                                     className="p-1.5 text-amber-400 hover:bg-amber-500/20 rounded transition-colors" title="Visualizar conteúdo">
                                     <Eye size={15} />
                                   </button>
@@ -439,22 +464,30 @@ export default function Backups() {
                   </p>
                 </div>
               </div>
-              <button onClick={() => setPreview(null)} className="text-slate-400 hover:text-white"><X size={18} /></button>
+              <button onClick={() => { setPreview(null); setPreviewConteudo('') }} className="text-slate-400 hover:text-white"><X size={18} /></button>
             </div>
             <div className="p-4 sm:p-5 flex-1 overflow-auto">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs text-slate-400">{preview.conteudo?.length?.toLocaleString()} caracteres</span>
-              </div>
-              <pre className="bg-slate-900 rounded-lg p-4 text-xs text-slate-300 whitespace-pre-wrap break-all font-mono leading-relaxed">
-                {preview.conteudo}
-              </pre>
+              {previewLoading ? (
+                <div className="flex items-center justify-center py-12 text-slate-400 text-sm gap-2">
+                  <RefreshCw size={16} className="animate-spin" /> Carregando conteúdo…
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xs text-slate-400">{previewConteudo.length.toLocaleString()} caracteres</span>
+                  </div>
+                  <pre className="bg-slate-900 rounded-lg p-4 text-xs text-slate-300 whitespace-pre-wrap break-all font-mono leading-relaxed">
+                    {previewConteudo}
+                  </pre>
+                </>
+              )}
             </div>
             <div className="p-4 sm:p-5 border-t border-slate-700 shrink-0 flex gap-3">
               <button onClick={() => download(preview)}
                 className="flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                 <Download size={14} /> Baixar arquivo
               </button>
-              <button onClick={() => setPreview(null)}
+              <button onClick={() => { setPreview(null); setPreviewConteudo('') }}
                 className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
                 Fechar
               </button>

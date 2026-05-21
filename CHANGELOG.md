@@ -12,6 +12,19 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.2.4] - 2026-05-20
+
+### Corrigido — listagem de backups lenta (payload de dezenas de MB)
+
+- **`GET /api/backups/` trazia o `conteudo` completo de até 200 backups inline.** Config de equipamento pode ter MBs (no ibiunet: média 331 KB, máx 2.9 MB por backup, 105 backups) — a listagem montava um JSON de ~30-35 MB só pra exibir a tabela de metadados, travando o frontend na página Backups. Achado em produção (ibiunet) reportado como "lento pra exibir backups". Recursos do servidor estavam ociosos (load 0, RAM/disco folgados) — era puramente o tamanho do payload.
+  - **Backend:** novo schema `BackupListWithDevice` (sem `conteudo`). A query usa `defer(Backup.conteudo)` pra tirar a coluna do SELECT e `func.length(conteudo)` pra devolver só o `tamanho_bytes`. Payload da listagem cai de dezenas de MB pra alguns KB.
+  - **Frontend:** a tabela usa `tamanho_bytes` vindo do backend (em vez de `conteudo.length`). O modal de visualização ("olho") busca o conteúdo **sob demanda** via `GET /{id}/download` ao abrir, com estado de "Carregando…". O download já era sob demanda e não muda.
+
+### Notas
+
+- Sem mudança de schema do banco — só de como a API serializa a listagem. Compatível com dados existentes.
+- O endpoint `GET /api/backups/device/{id}` (não usado pelo frontend atual) segue trazendo conteúdo; pode receber a mesma otimização se vier a ser usado.
+
 ## [2.2.3] - 2026-05-20
 
 ### Corrigido — regressão crítica: modo ativo bloqueado quebrava devices com IP público

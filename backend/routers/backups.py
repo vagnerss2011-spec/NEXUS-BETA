@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, delete, func
+from sqlalchemy.orm import selectinload, defer
 from database import get_db
 from models import Backup, Device, User, UserRole, TipoAtividade
 from auth import require_role, get_current_user, is_master, ensure_empresa_access
-from schemas import BackupOut, BackupWithDevice
+from schemas import BackupOut, BackupWithDevice, BackupListWithDevice
 from services.ssh_service import run_backup
 from services.scheduler import _limpar_backups_antigos
 from services import audit
@@ -13,16 +13,21 @@ from typing import List, Optional
 
 router = APIRouter(prefix="/api/backups", tags=["backups"])
 
-@router.get("/", response_model=List[BackupWithDevice])
+@router.get("/", response_model=List[BackupListWithDevice])
 async def listar_backups(
     empresa_id: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # IMPORTANTE: NÃO traz `conteudo` (pode ter MBs por backup). `defer` tira
+    # a coluna do SELECT e `func.length` devolve só o tamanho — o frontend usa
+    # isso pra exibir KB/MB e detectar truncamento. Conteúdo é buscado sob
+    # demanda no preview (GET /{id}/download). Antes a listagem trazia tudo
+    # inline e gerava payloads de dezenas de MB que travavam o frontend.
     q = (
-        select(Backup)
+        select(Backup, func.length(Backup.conteudo).label("tamanho"))
         .join(Device, Backup.device_id == Device.id)
-        .options(selectinload(Backup.device))
+        .options(selectinload(Backup.device), defer(Backup.conteudo))
         .order_by(Backup.criado_em.desc())
         .limit(200)
     )
@@ -33,8 +38,13 @@ async def listar_backups(
         if user.empresa_id is None:
             return []
         q = q.where(Device.empresa_id == user.empresa_id)
-    result = await db.execute(q)
-    return result.scalars().all()
+    rows = (await db.execute(q)).all()
+    out = []
+    for backup, tamanho in rows:
+        item = BackupListWithDevice.model_validate(backup)
+        item.tamanho_bytes = tamanho
+        out.append(item)
+    return out
 
 @router.get("/device/{device_id}", response_model=List[BackupOut])
 async def backups_por_device(
