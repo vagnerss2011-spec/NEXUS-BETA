@@ -23,6 +23,17 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    # Healthcheck consultado pelo nexus-update.sh (v2.5.0) pra decidir se o
+    # update foi bem-sucedido ou se precisa rollback. Usa urllib do próprio
+    # Python (sem dep extra de curl no container). GET / retorna JSON com
+    # version, então 200 = backend de pé e respondendo. start_period dá
+    # tempo da migração + scheduler iniciarem antes da 1ª checagem.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; r=urllib.request.urlopen(\"http://localhost:8000/\",timeout=3); sys.exit(0 if r.status==200 else 1)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     # Backup push: equipamentos enviam o backup pra cá.
     # - 21/tcp: FTP controle (passive na faixa 30000-30099 abaixo)
     # - 22/tcp: SFTP. SSH do host foi movido para 2288 (em 2026-04-27) para

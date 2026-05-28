@@ -44,9 +44,12 @@ STATUS_FILE = UPDATE_DIR / "status.json"
 # recusa requests pra não criar trigger file que ninguém vai consumir.
 HOST_READY_MARKER = UPDATE_DIR / "host-ready"
 
-# Estados válidos no fluxo
+# Estados válidos no fluxo. `rolled_back` (v2.5.0) sinaliza que o update foi
+# disparado, falhou no health check pós-rebuild e o script REVERTEU pra
+# versão anterior automaticamente — sistema está saudável (na versão velha),
+# mas o admin precisa saber que a tentativa não vingou.
 ESTADOS_ATIVOS = ("queued", "running")
-ESTADOS_FINAIS = ("success", "failed")
+ESTADOS_FINAIS = ("success", "failed", "rolled_back")
 
 
 def _ensure_dir():
@@ -139,7 +142,7 @@ async def sync_status_to_db(db: AsyncSession) -> Optional[UpdateLog]:
     if not novo_estado or novo_estado == ultimo.status:
         return ultimo
     # Só atualiza pra estados "à frente" no fluxo
-    ordem = {"queued": 0, "running": 1, "success": 2, "failed": 2}
+    ordem = {"queued": 0, "running": 1, "success": 2, "failed": 2, "rolled_back": 2}
     if ordem.get(novo_estado, -1) <= ordem.get(ultimo.status, -1) and novo_estado not in ESTADOS_FINAIS:
         return ultimo
     ultimo.status = novo_estado

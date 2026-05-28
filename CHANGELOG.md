@@ -12,6 +12,42 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.5.0] - 2026-05-20
+
+### Adicionado — Rollback automático no auto-update (Fase 3)
+
+Update via painel agora tem **rede de segurança**: depois do `docker compose up --build`, o script aguarda warmup e roda **health check** do backend. Se o backend não voltar saudável em ~2 minutos, o script **reverte automaticamente** pra versão anterior (commit/tag de antes do checkout) e tenta de novo. Status final no painel pode ser `success`, `failed` ou o novo `rolled_back`.
+
+**Por que isso importa:** evita que uma release defeituosa derrube o servidor — em vez de admin precisar abrir SSH e fazer git checkout manual da versão anterior, o próprio sistema volta sozinho.
+
+**Mudanças:**
+
+- [docker-compose.yml](docker-compose.yml): healthcheck nativo no backend (`GET /` via urllib do próprio Python, sem dep extra). Docker passa a expor `State.Health.Status` que o script no host consulta com `docker inspect`. `start_period=30s` cobre boot do scheduler + migrações.
+- [scripts/host-update/nexus-update.sh](scripts/host-update/nexus-update.sh) reescrito:
+  - **Auto-instalação:** se o arquivo no repo (`scripts/host-update/nexus-update.sh`) é diferente do `/usr/local/bin/nexus-update.sh`, sobrescreve antes de continuar. Melhorias no script viajam com o `git pull` — você não precisa rodar `setup-update-helper.sh` de novo a cada release.
+  - Salva `PREV_REF` (`git describe --tags --exact-match HEAD` ou SHA) **antes** do checkout, pra ter pra onde voltar.
+  - Após `docker compose up -d --build`: warmup configurável (`NEXUS_UPDATE_WARMUP=20s`) + loop de health check (`HEALTH_RETRIES=12` × `HEALTH_INTERVAL_SECONDS=10s` = ~2 min máx).
+  - Se healthy → `status=success`. Se não → `git checkout PREV_REF + docker compose up --build` + revalida saúde. Se a versão antiga volta sã → `status=rolled_back`. Se nem o rollback fica saudável → `status=failed` com tail do log (intervenção manual).
+- `services/update_runner.py`: `rolled_back` adicionado em `ESTADOS_FINAIS`.
+- `UpdateCard.jsx`: painel de status ganha estado amber pro `rolled_back` ("Atualização revertida automaticamente — saúde do backend não voltou"), mostrando a mensagem do host com a versão pra onde voltou.
+
+### Pra rodar nos servidores existentes
+
+```bash
+cd /root/NEXUS-BETA
+git pull origin backup
+docker compose up -d --build backend frontend
+sudo bash scripts/setup-update-helper.sh    # idempotente — reinstala o script com rollback
+```
+
+A partir daí, qualquer update via painel já vai usar a versão nova do script (graças à auto-instalação que ele faz de si mesmo no início da execução).
+
+### Notas técnicas
+
+- O healthcheck usa `urllib.request.urlopen("http://localhost:8000/", timeout=3)` rodando **dentro** do container backend — não depende de port-mapping no host nem de curl no container.
+- Tempos são configuráveis por env var (`NEXUS_UPDATE_WARMUP`, `NEXUS_UPDATE_RETRIES`, `NEXUS_UPDATE_INTERVAL`) caso uma instância precise de mais folga. Defaults cobrem o caso comum.
+- Se o rollback acontecer, o `last-run.log` (`/root/NEXUS-BETA/infra/update/last-run.log`) tem o passo-a-passo completo — useful pra diagnosticar o que deu errado na release nova.
+
 ## [2.4.0] - 2026-05-20
 
 ### Adicionado — Botão "Atualizar pelo painel" (Fase 2 do auto-update)

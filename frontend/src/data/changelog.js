@@ -15,6 +15,18 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.5.0 =====
+  {
+    data: '2026-05-20',
+    tipo: 'melhoria',
+    icone: 'ShieldCheck',
+    categoria: 'Sistema',
+    titulo: 'Auto-update agora reverte sozinho se algo der errado',
+    descricao:
+      'Quando você atualiza pelo painel, o sistema agora confirma que o backend voltou saudável. ' +
+      'Se em ~2 minutos a saúde não voltar, ele reverte automaticamente para a versão anterior — você vê "Atualização revertida" no painel, em vez de um servidor caído. ' +
+      'Sem isso, uma release defeituosa exigia SSH manual pra voltar.',
+  },
   // ===== Maio/2026 — v2.4.0 =====
   {
     data: '2026-05-20',

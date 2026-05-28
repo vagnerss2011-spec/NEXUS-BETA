@@ -36,10 +36,11 @@ function formatarData(iso) {
 
 function UpdateStatusPanel({ status }) {
   const cfg = {
-    queued:  { Icon: Loader2,    cls: 'border-sky-500/40 bg-sky-500/10 text-sky-200',         label: 'Aguardando o helper do host pegar o pedido…', spin: true  },
-    running: { Icon: Loader2,    cls: 'border-sky-500/40 bg-sky-500/10 text-sky-200',         label: 'Atualização em andamento (git checkout + docker build)…', spin: true  },
-    success: { Icon: CheckCircle,cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200', label: 'Atualização concluída com sucesso.', spin: false },
-    failed:  { Icon: XCircle,    cls: 'border-red-500/40 bg-red-500/10 text-red-200',         label: 'Atualização falhou.', spin: false },
+    queued:      { Icon: Loader2,        cls: 'border-sky-500/40 bg-sky-500/10 text-sky-200',         label: 'Aguardando o helper do host pegar o pedido…', spin: true  },
+    running:     { Icon: Loader2,        cls: 'border-sky-500/40 bg-sky-500/10 text-sky-200',         label: 'Atualização em andamento (git checkout + docker build + health check)…', spin: true  },
+    success:     { Icon: CheckCircle,    cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200', label: 'Atualização concluída com sucesso.', spin: false },
+    failed:      { Icon: XCircle,        cls: 'border-red-500/40 bg-red-500/10 text-red-200',         label: 'Atualização falhou.', spin: false },
+    rolled_back: { Icon: AlertTriangle,  cls: 'border-amber-500/40 bg-amber-500/10 text-amber-200',   label: 'Atualização revertida automaticamente (saúde do backend não voltou).', spin: false },
   }[status.state]
   if (!cfg) return null
   return (
