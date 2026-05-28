@@ -12,6 +12,43 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.3.0] - 2026-05-20
+
+### Adicionado — Canais de atualização (LTS / Edge) + card "Atualização do sistema"
+
+Fase 1 do sistema de auto-update: comparação de versão **rica** com distinção entre canal estável (LTS) e canal de testes (Edge), changelog completo do release alvo e comando SSH pronto pra copiar. A Fase 2 — botão "Atualizar agora" pelo painel — virá numa próxima tag (precisa do systemd path unit no host).
+
+**Source of truth = GitHub Releases.** A política nativa de "Latest" vs "Pre-release" decide o canal: você cria um Release pra cada versão, marca como Pre-release as que estão em teste e como Latest as que estabilizaram em produção. Não precisa de tag/branch/arquivo extra.
+
+**Backend:**
+
+- `services/version_check.py` reescrito. Consulta `GET /repos/{owner}/{repo}/releases?per_page=30`, separa `latest_lts` (primeira com `prerelease=false`) de `latest_edge` (primeira overall, com ou sem pre-release). Cache TTL 1h **por canal**. Fallback gracioso: se o repo ainda não tem Releases criados (só tags), cai pro `/tags` antigo e mostra aviso no painel.
+- `Configuracao.update_channel` (`String(8)`, default `'lts'`) — campo global da instância. Migração idempotente.
+- `GET /api/version/check` agora retorna `VersionCheckOut` rico: `current`, `channel`, `current_release` + `current_dias_em_producao` (release date → hoje, ajuda você a decidir quando promover de Edge a LTS), `latest_lts`, `latest_edge`, `target` (latest do canal escolhido) e `update_available`. Campos legacy `latest` e `changelog_summary` mantidos preenchidos pra compat.
+- `GET /api/version/channel` + `PATCH /api/version/channel` (admin master). Cache por canal garante que troca → próxima request já busca dados frescos.
+
+**Frontend:**
+
+- Novo componente [UpdateCard.jsx](frontend/src/components/UpdateCard.jsx) renderizado em **Configurações → Atualização do sistema**:
+  - Versão atual + "há X dias em produção"
+  - Toggle de canal (LTS/Edge) — admin master clica e troca; demais roles veem mas não trocam
+  - Última LTS e última Edge (tag, data, link pro release no GitHub)
+  - Se há update no canal: changelog completo (body do release em markdown) num accordion + **comando SSH pronto pra copiar** (`cd /root/NEXUS-BETA && git fetch origin && git checkout <tag> && docker compose up -d --build backend frontend`)
+  - Avisos quando o GitHub não responde ou o repo não tem Releases criados
+- [UpdateBanner.jsx](frontend/src/components/UpdateBanner.jsx) enriquecido: mostra a badge do canal do release alvo (LTS verde / Edge âmbar) e o modal aponta pro card de Settings em vez do `RELEASING.md`.
+
+**Operacional pra você:**
+
+1. Vá em **GitHub → Releases → "Draft a new release"** pra cada tag (a partir desta v2.3.0 idealmente).
+2. Promoção de Edge → LTS: edita o Release no GitHub, **desmarca "Pre-release"** (marca como Latest). Instâncias no canal LTS passam a ver a versão na próxima checagem (até 1h pelo cache, ou clicando "Atualizar agora" no card).
+3. Use o critério da Fase 1: deixe a versão em **Edge por X dias** num servidor canário (ex.: ibiunet) e promova quando estiver confortável.
+
+### Notas técnicas
+
+- Sem mudança de DDL além do campo `update_channel`. Servidores existentes precisam apenas `git pull && docker compose up -d --build` — a migração roda no startup.
+- `GITHUB_TOKEN` e `GITHUB_REPO` no `.env` continuam sendo o que o backend usa pra consultar o GitHub. Sem token = card mostra aviso e fica vazio.
+- Cache TTL 1h continua. Pra forçar refresh durante debug: `GET /api/version/check?refresh=true` (botão "Atualizar agora" no card faz isso).
+
 ## [2.2.4] - 2026-05-20
 
 ### Corrigido — listagem de backups lenta (payload de dezenas de MB)

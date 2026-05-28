@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Clock, Save, ScrollText, Bell, Send, AlertTriangle, Gauge, Cpu, ShieldCheck, Download, Cloud, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react'
 import api from '../services/api'
+import UpdateCard from '../components/UpdateCard'
 
 // Converte dias <-> exibição em dias/meses (mês = 30 dias)
 function daysToView(totalDays) {
@@ -780,6 +781,9 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {/* Atualização do sistema (v2.3.0) — canais LTS/Edge + changelog + comando SSH */}
+      <UpdateCard />
     </div>
   )
 }

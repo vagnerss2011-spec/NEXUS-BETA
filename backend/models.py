@@ -255,6 +255,13 @@ class Configuracao(Base):
     telegram_alerta_falha_backup = Column(Boolean, nullable=False, default=True)
     telegram_alerta_push_negado = Column(Boolean, nullable=False, default=True)
     telegram_alerta_volume_alto = Column(Boolean, nullable=False, default=True)
+    # ===== Canal de atualização (v2.3.0) =====
+    # 'lts'  = só recebe releases marcadas como "Latest" no GitHub (estáveis,
+    #          promovidas manualmente após estabilizarem em prod).
+    # 'edge' = recebe a release mais recente, incluindo as marcadas como
+    #          "Pre-release" (features novas, testes).
+    # Default 'lts' = comportamento conservador pra instâncias novas.
+    update_channel = Column(String(8), nullable=False, server_default="lts", default="lts")
 
 class Atividade(Base):
     __tablename__ = "atividades"

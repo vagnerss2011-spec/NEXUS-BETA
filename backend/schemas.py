@@ -408,6 +408,51 @@ class FirmwareOrigemOut(BaseModel):
         from_attributes = True
 
 
+class ReleaseInfoOut(BaseModel):
+    """Metadados de uma GitHub Release (ou tag, no fallback) — v2.3.0."""
+    tag: str
+    version: str
+    name: Optional[str] = None
+    published_at: Optional[str] = None
+    body: Optional[str] = None
+    prerelease: bool = False
+    is_lts: bool = False
+    url: Optional[str] = None
+
+
+class VersionCheckOut(BaseModel):
+    """Estado de versão da instância vs canais LTS/Edge do GitHub Releases."""
+    current: str                                # APP_VERSION ('2.2.4')
+    channel: str                                # 'lts' | 'edge'
+    update_available: bool = False
+    checked_at: float
+    current_release: Optional[ReleaseInfoOut] = None
+    current_dias_em_producao: Optional[int] = None
+    latest_lts: Optional[ReleaseInfoOut] = None
+    latest_edge: Optional[ReleaseInfoOut] = None
+    target: Optional[ReleaseInfoOut] = None     # latest do canal escolhido
+    # Compat: o UpdateBanner original lia esses 2 campos. Mantidos pra não
+    # quebrar caches/clients enquanto a UI nova rolling out.
+    latest: Optional[str] = None
+    changelog_summary: Optional[str] = None
+
+
+class UpdateChannelIn(BaseModel):
+    channel: str  # 'lts' | 'edge'
+
+    @field_validator("channel")
+    @classmethod
+    def _valida_channel(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in ("lts", "edge"):
+            raise ValueError("channel deve ser 'lts' ou 'edge'")
+        return v
+
+
+class UpdateChannelOut(BaseModel):
+    channel: str  # 'lts' | 'edge'
+
+
 class FirmwareOrigemCredencial(FirmwareOrigemOut):
     """Retornado SOMENTE no momento da criação/regeneração da senha — senha
     em texto puro, mostrada uma vez. Frontend deve forçar copy + warn."""

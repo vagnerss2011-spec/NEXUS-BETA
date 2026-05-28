@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Sparkles, X } from 'lucide-react'
+import { Sparkles, X, ShieldCheck, FlaskConical } from 'lucide-react'
 import api from '../services/api'
 
 // Banner de "versão nova disponível". Aparece no topo de todas as páginas
-// quando o backend acha update no GitHub. Update é manual (SSH + RELEASING.md);
-// banner só notifica.
+// quando o backend acha update no canal escolhido (LTS/Edge — v2.3.0).
+// Update propriamente dito é manual via SSH; banner só notifica. Detalhe
+// completo (canal, datas, comando SSH copy) fica na seção "Atualização do
+// sistema" em Configurações.
 
 const DISMISSED_KEY = 'nexusUpdateBannerDismissedTag'
 const POLL_INTERVAL_MS = 30 * 60 * 1000  // 30min — alinha com TTL 1h do cache backend
@@ -41,6 +43,13 @@ export default function UpdateBanner() {
 
   if (!info?.update_available || dismissed) return null
 
+  // Canal do release alvo — se backend mandar `target.is_lts`, usa. Senão
+  // cai no canal da instância (compat com versões antigas do backend).
+  const isLts = info.target ? info.target.is_lts : info.channel !== 'edge'
+  const CanalIcon = isLts ? ShieldCheck : FlaskConical
+  const canalLabel = isLts ? 'LTS' : 'Edge'
+  const canalCls = isLts ? 'text-emerald-300' : 'text-amber-300'
+
   return (
     <>
       <div className="bg-sky-500/10 border-b border-sky-500/30 px-4 py-2 flex items-center justify-between gap-3">
@@ -48,6 +57,9 @@ export default function UpdateBanner() {
           <Sparkles size={15} className="text-sky-400 shrink-0" />
           <span className="truncate">
             <strong className="text-sky-200">Versão {info.latest} disponível</strong>
+            <span className={`ml-2 text-xs inline-flex items-center gap-1 ${canalCls}`}>
+              <CanalIcon size={11} /> {canalLabel}
+            </span>
             <span className="text-slate-400 ml-2 text-xs">você está em v{info.current}</span>
           </span>
         </div>
@@ -72,8 +84,8 @@ export default function UpdateBanner() {
               <div className="min-w-0 pr-3">
                 <h2 className="font-semibold text-white">O que muda em {info.latest}</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Você está em v{info.current}. Update é manual via SSH —
-                  veja <code className="text-slate-300 bg-slate-900 px-1 rounded">RELEASING.md</code> no repo.
+                  Você está em v{info.current}. Comando SSH pronto pra copiar fica em
+                  <span className="text-slate-300"> Configurações → Atualização do sistema</span>.
                 </p>
               </div>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-white shrink-0">

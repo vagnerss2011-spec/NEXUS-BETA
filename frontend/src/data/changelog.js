@@ -15,6 +15,20 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.3.0 =====
+  {
+    data: '2026-05-20',
+    tipo: 'novidade',
+    icone: 'GitBranch',
+    categoria: 'Sistema',
+    titulo: 'Canais LTS e Edge + card "Atualização do sistema"',
+    descricao:
+      'Em Configurações → Atualização do sistema você agora vê em qual versão está, há quantos dias está em produção, ' +
+      'qual é a última LTS (estável) e a última Edge (com novidades em teste), e troca entre os dois canais com um clique. ' +
+      'Quando tem atualização, o painel mostra o changelog completo + o comando SSH pronto pra copiar e colar no servidor. ' +
+      'Botão de "Atualizar agora" pelo painel chegará numa próxima versão. Política de canais usa nativamente os Releases do GitHub: ' +
+      'pre-release vira Edge, "Latest" vira LTS — você promove uma versão pra LTS marcando-a como Latest no repositório.',
+  },
   // ===== Maio/2026 — v2.2.3 =====
   {
     data: '2026-05-20',

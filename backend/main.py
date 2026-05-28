@@ -434,6 +434,13 @@ async def lifespan(app: FastAPI):
             ADD COLUMN IF NOT EXISTS origem_cidr VARCHAR(255)
         """))
 
+        # configuracoes.update_channel — canal de atualização (v2.3.0).
+        # 'lts' = só releases marcadas Latest no GitHub; 'edge' = inclui Pre-release.
+        await conn.execute(text("""
+            ALTER TABLE configuracoes
+            ADD COLUMN IF NOT EXISTS update_channel VARCHAR(8) NOT NULL DEFAULT 'lts'
+        """))
+
     await iniciar_scheduler()
     iniciar_ftp_server()
     iniciar_sftp_server()
