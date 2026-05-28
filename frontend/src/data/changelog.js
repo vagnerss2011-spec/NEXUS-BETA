@@ -15,6 +15,19 @@
 // Pra adicionar entrada nova: empurra no TOPO do array.
 
 export const CHANGELOG_ENTRIES = [
+  // ===== Maio/2026 — v2.4.0 =====
+  {
+    data: '2026-05-20',
+    tipo: 'novidade',
+    icone: 'GitBranch',
+    categoria: 'Sistema',
+    titulo: 'Atualizar o NEXUS pelo painel (sem SSH)',
+    descricao:
+      'Em Configurações → Atualização do sistema, quando há versão nova você tem o botão "Atualizar pelo painel". ' +
+      'Confirma a versão alvo (anti-acidente) e o sistema dispara git checkout + rebuild dos containers sozinho, mostrando o progresso em tempo real. ' +
+      'Backup em andamento ou outro update já em curso bloqueiam o disparo. ' +
+      'Pra ativar: rode uma vez no servidor: bash scripts/setup-update-helper.sh — isso instala o helper de sistema (systemd) que executa o update no host. Depois disso, é só clicar no painel.',
+  },
   // ===== Maio/2026 — v2.3.0 =====
   {
     data: '2026-05-20',

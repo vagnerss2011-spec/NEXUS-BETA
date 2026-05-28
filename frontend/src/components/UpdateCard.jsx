@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   RefreshCw, GitBranch, Copy, Check, ExternalLink, Info, Loader2,
   Sparkles, ShieldCheck, FlaskConical, AlertTriangle, ChevronDown, ChevronUp,
+  Rocket, X, CheckCircle, XCircle,
 } from 'lucide-react'
 import api, { getUser } from '../services/api'
+
+const ESTADOS_ATIVOS = new Set(['queued', 'running'])
+const POLL_INTERVAL_MS = 3000
 
 // Card "Atualização do sistema" no Settings (v2.3.0+).
 //
@@ -28,6 +32,38 @@ function formatarData(iso) {
   } catch {
     return iso
   }
+}
+
+function UpdateStatusPanel({ status }) {
+  const cfg = {
+    queued:  { Icon: Loader2,    cls: 'border-sky-500/40 bg-sky-500/10 text-sky-200',         label: 'Aguardando o helper do host pegar o pedido…', spin: true  },
+    running: { Icon: Loader2,    cls: 'border-sky-500/40 bg-sky-500/10 text-sky-200',         label: 'Atualização em andamento (git checkout + docker build)…', spin: true  },
+    success: { Icon: CheckCircle,cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200', label: 'Atualização concluída com sucesso.', spin: false },
+    failed:  { Icon: XCircle,    cls: 'border-red-500/40 bg-red-500/10 text-red-200',         label: 'Atualização falhou.', spin: false },
+  }[status.state]
+  if (!cfg) return null
+  return (
+    <div className={`border rounded-lg p-3 ${cfg.cls}`}>
+      <div className="flex items-start gap-2">
+        <cfg.Icon size={16} className={cfg.spin ? 'animate-spin mt-0.5 shrink-0' : 'mt-0.5 shrink-0'} />
+        <div className="text-sm flex-1 min-w-0">
+          <div className="font-medium">{cfg.label}</div>
+          {(status.versao_de || status.versao_para) && (
+            <div className="text-xs opacity-80 mt-0.5">
+              {status.versao_de && <span>de <code className="font-mono">v{status.versao_de}</code></span>}
+              {status.versao_para && <span> → <code className="font-mono">{status.versao_para}</code></span>}
+              {status.usuario_nome && <span className="ml-2 opacity-70">por {status.usuario_nome}</span>}
+            </div>
+          )}
+          {status.mensagem && (
+            <pre className="mt-2 text-[11px] bg-slate-900 rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
+              {status.mensagem}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function ChannelBadge({ channel, size = 'sm' }) {
@@ -78,6 +114,14 @@ export default function UpdateCard() {
   const [copiado, setCopiado] = useState('')
   const [erro, setErro] = useState('')
 
+  // Auto-update via painel (Fase 2 — v2.4.0)
+  const [updateStatus, setUpdateStatus] = useState(null)   // { state, versao_de, ... }
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
+  const [triggering, setTriggering] = useState(false)
+  const [triggerErro, setTriggerErro] = useState('')
+  const pollRef = useRef(null)
+
   async function carregar({ refresh = false } = {}) {
     if (refresh) setRefreshing(true)
     else setLoading(true)
@@ -114,6 +158,63 @@ export default function UpdateCard() {
     navigator.clipboard.writeText(texto)
     setCopiado(label)
     setTimeout(() => setCopiado(''), 1500)
+  }
+
+  // ───── Auto-update via painel (Fase 2) ─────
+
+  async function carregarStatus() {
+    try {
+      const { data } = await api.get('/version/update/status')
+      setUpdateStatus(data)
+      return data
+    } catch (e) {
+      // Endpoints podem não existir em backend antigo — silencia.
+      return null
+    }
+  }
+
+  function pararPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+  }
+
+  function iniciarPolling() {
+    pararPolling()
+    pollRef.current = setInterval(async () => {
+      const data = await carregarStatus()
+      if (!data || !ESTADOS_ATIVOS.has(data.state)) {
+        pararPolling()
+        // Quando termina, recarrega a checagem de versão (current pode ter mudado)
+        if (data && data.state === 'success') carregar({ refresh: true })
+      }
+    }, POLL_INTERVAL_MS)
+  }
+
+  useEffect(() => {
+    carregarStatus().then(data => {
+      if (data && ESTADOS_ATIVOS.has(data.state)) iniciarPolling()
+    })
+    return pararPolling
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function disparar() {
+    if (!info?.target) return
+    setTriggerErro('')
+    setTriggering(true)
+    try {
+      const { data } = await api.post('/version/update/trigger', {
+        target_tag: info.target.tag,
+        confirm_version: confirmText.trim(),
+      })
+      setUpdateStatus(data)
+      setShowConfirm(false)
+      setConfirmText('')
+      iniciarPolling()
+    } catch (e) {
+      setTriggerErro(e.response?.data?.detail || e.message || 'Falha ao disparar update')
+    } finally {
+      setTriggering(false)
+    }
   }
 
   if (loading) {
@@ -231,6 +332,11 @@ export default function UpdateCard() {
         </div>
       )}
 
+      {/* Painel de status do último update (Fase 2) */}
+      {updateStatus && updateStatus.state !== 'idle' && (
+        <UpdateStatusPanel status={updateStatus} />
+      )}
+
       {/* Card de "tem update disponível" */}
       {info.update_available && info.target && (
         <div className="bg-sky-500/5 border border-sky-500/30 rounded-lg overflow-hidden">
@@ -277,11 +383,82 @@ export default function UpdateCard() {
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1.5">
-                  Cole no terminal SSH (porta 2288) do servidor. O update via botão no painel chegará numa próxima versão.
+                  Cole no terminal SSH (porta 2288) do servidor.
                 </p>
               </div>
+
+              {/* Botão: Atualizar pelo painel (Fase 2) */}
+              {isMaster && (
+                <div className="border-t border-sky-500/20 pt-3">
+                  {updateStatus && !updateStatus.host_helper_disponivel ? (
+                    <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded p-2 flex gap-2">
+                      <Info size={13} className="shrink-0 mt-0.5" />
+                      <span>
+                        Helper de update do host não está instalado. Conecte por SSH e rode uma vez:{' '}
+                        <code className="bg-slate-900 px-1 rounded">cd /root/NEXUS-BETA &amp;&amp; bash scripts/setup-update-helper.sh</code>.
+                        Depois disso, este botão fica disponível.
+                      </span>
+                    </div>
+                  ) : updateStatus && ESTADOS_ATIVOS.has(updateStatus.state) ? (
+                    <div className="text-xs text-sky-200 flex items-center gap-2">
+                      <Loader2 size={13} className="animate-spin" />
+                      Update em andamento ({updateStatus.state}) — aguarde concluir.
+                    </div>
+                  ) : (
+                    <button onClick={() => { setConfirmText(''); setTriggerErro(''); setShowConfirm(true) }}
+                      className="flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium">
+                      <Rocket size={14} /> Atualizar pelo painel
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal de confirmação — Fase 2 */}
+      {showConfirm && info?.target && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={triggering ? undefined : () => setShowConfirm(false)}>
+          <div className="bg-slate-800 rounded-lg border border-emerald-500/40 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <h3 className="font-semibold text-emerald-300 flex items-center gap-2"><Rocket size={18} /> Confirmar atualização</h3>
+              <button onClick={() => setShowConfirm(false)} disabled={triggering}
+                className="text-slate-400 hover:text-white disabled:opacity-40"><X size={18} /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-sm text-slate-300">
+                Você vai atualizar de <code className="text-sky-300 font-mono">v{info.current}</code> para <code className="text-emerald-300 font-mono">{info.target.tag}</code>.
+              </p>
+              <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded p-2">
+                <AlertTriangle size={13} className="inline mr-1" />
+                Durante o build os containers <strong>backend</strong> e <strong>frontend</strong> reiniciam (~1-3 min).
+                O painel pode ficar indisponível por alguns segundos.
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">
+                  Para confirmar, digite a versão alvo: <code className="text-emerald-300 font-mono">{info.target.tag}</code>
+                </label>
+                <input value={confirmText} onChange={e => setConfirmText(e.target.value)} disabled={triggering}
+                  placeholder={info.target.tag}
+                  className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-sm text-white font-mono" />
+              </div>
+              {triggerErro && (
+                <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded p-2 flex gap-2">
+                  <AlertTriangle size={14} className="shrink-0 mt-0.5" /> <span>{triggerErro}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-slate-700">
+              <button onClick={() => setShowConfirm(false)} disabled={triggering}
+                className="px-3 py-1.5 text-sm text-slate-300 hover:text-white">Cancelar</button>
+              <button onClick={disparar} disabled={triggering || confirmText.trim() !== info.target.tag}
+                className="px-4 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1.5">
+                {triggering ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
+                {triggering ? 'Disparando' : 'Atualizar agora'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -387,6 +387,32 @@ class FirmwareOrigem(Base):
     criado_por_nome = Column(String(120), nullable=False)
 
 
+class UpdateLog(Base):
+    """Audit de execuções de update via painel (v2.4.0).
+
+    Cada clique em "Atualizar pelo painel" grava 1 row aqui ANTES de escrever
+    o trigger file lido pelo systemd no host. `status` evolui:
+      queued    → request escrito no volume, aguardando systemd disparar
+      running   → script no host pegou o request e começou
+      success   → docker compose up terminou OK e backend voltou
+      failed    → script reportou falha (saída != 0, timeout, etc.)
+    A transição queued→running e seguintes é feita pelo script do host
+    sobrescrevendo /var/lib/nexus/update/status.json, que o backend lê e
+    espelha aqui em background pra audit.
+    """
+    __tablename__ = "update_log"
+    id = Column(Integer, primary_key=True)
+    versao_de = Column(String(20), nullable=False)
+    versao_para = Column(String(20), nullable=False)
+    canal = Column(String(8), nullable=False)          # 'lts' | 'edge' no momento
+    status = Column(String(12), nullable=False, default="queued")
+    mensagem = Column(Text, nullable=True)             # erro / output trail
+    iniciado_em = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    concluido_em = Column(DateTime(timezone=True), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    usuario_nome = Column(String(120), nullable=False)
+
+
 class LogScheduler(Base):
     __tablename__ = "log_scheduler"
     id = Column(Integer, primary_key=True)

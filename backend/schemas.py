@@ -453,6 +453,35 @@ class UpdateChannelOut(BaseModel):
     channel: str  # 'lts' | 'edge'
 
 
+class UpdateTriggerIn(BaseModel):
+    """Payload do botão 'Atualizar pelo painel' (v2.4.0).
+
+    `confirm_version` precisa bater exatamente com a tag alvo (o frontend
+    pede pra o admin digitar). É anti-acidente — não anti-malicioso, já que
+    só admin master chega aqui."""
+    target_tag: str          # ex.: 'v2.3.0'
+    confirm_version: str     # mesmo valor, digitado de novo
+
+
+class UpdateStatusOut(BaseModel):
+    """Estado do último update disparado.
+
+    Quando não há update conhecido, retorna {state: 'idle'}. Durante e após
+    um update, traz versao_de/para, canal, timestamps e mensagem (output do
+    script ou erro). UI faz polling enquanto state in (queued, running)."""
+    state: str               # 'idle' | 'queued' | 'running' | 'success' | 'failed'
+    versao_de: Optional[str] = None
+    versao_para: Optional[str] = None
+    canal: Optional[str] = None
+    iniciado_em: Optional[str] = None
+    concluido_em: Optional[str] = None
+    mensagem: Optional[str] = None
+    usuario_nome: Optional[str] = None
+    # Quando o host helper NÃO está instalado, o backend não tem como disparar
+    # — UI mostra mensagem orientando rodar scripts/setup-update-helper.sh.
+    host_helper_disponivel: bool = True
+
+
 class FirmwareOrigemCredencial(FirmwareOrigemOut):
     """Retornado SOMENTE no momento da criação/regeneração da senha — senha
     em texto puro, mostrada uma vez. Frontend deve forçar copy + warn."""

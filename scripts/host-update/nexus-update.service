@@ -1,0 +1,19 @@
+[Unit]
+Description=Nexus Backup — apply update requested via panel
+Documentation=https://github.com/vagnerss2011-spec/NEXUS-BETA
+# Sequencial: nada de paralelo. Se o path disparar 2x rápido, a 2ª espera.
+ConditionPathExists=/root/NEXUS-BETA/infra/update/request.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nexus-update.sh
+# Não restart automático — se falhou, falhou (rerun explícito pelo painel).
+# Output vai pro journal além do last-run.log que o próprio script escreve.
+StandardOutput=journal
+StandardError=journal
+# Timeout generoso: build do frontend Vite + backend Python em VMs modestas
+# pode passar de 5min. 20 min cobre o pior caso conhecido.
+TimeoutStartSec=20min
+# RemainAfterExit=no — depois que o oneshot termina, status volta a "inactive"
+# e o path unit fica livre pra disparar de novo no próximo request.
+RemainAfterExit=no

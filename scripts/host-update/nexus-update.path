@@ -1,0 +1,17 @@
+[Unit]
+Description=Nexus Backup — watch for update requests
+Documentation=https://github.com/vagnerss2011-spec/NEXUS-BETA
+
+[Path]
+# REPO_DIR no helper aponta pra /root/NEXUS-BETA por default. Volume bind do
+# docker-compose monta infra/update do repo em /var/lib/nexus/update DENTRO do
+# container; do lado do host, é ${REPO_DIR}/infra/update. O path unit watches
+# o request.json escrito pelo backend.
+PathChanged=/root/NEXUS-BETA/infra/update/request.json
+# Quando o arquivo aparece e estabiliza, dispara o service. Trigger limit
+# evita loops se o script criar/remover muito rápido.
+TriggerLimitIntervalSec=30
+TriggerLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target

@@ -12,6 +12,56 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.4.0] - 2026-05-20
+
+### Adicionado — Botão "Atualizar pelo painel" (Fase 2 do auto-update)
+
+Auto-update completo pelo painel sem precisar abrir SSH. Arquitetura **trigger file + systemd no host** — o backend (container) nunca toca em `docker.sock`; quem faz `git pull + docker compose up --build` é um script rodando como root no host, disparado por um path unit. Container backend pode reiniciar a si mesmo sem race porque é o systemd no host que orquestra.
+
+**Backend:**
+
+- Tabela nova `update_log` (audit completo): `id`, `versao_de`, `versao_para`, `canal`, `status` (queued/running/success/failed), `mensagem`, `iniciado_em`, `concluido_em`, `usuario_id`, `usuario_nome`. Criada por `Base.metadata.create_all` (sem ALTER manual).
+- [services/update_runner.py](backend/services/update_runner.py): I/O do `request.json` / `status.json` no volume bind-mounted (`/var/lib/nexus/update`), detecção do marker `host-ready` (= helper instalado), sincronização idempotente do status do host pro DB.
+- `POST /api/version/update/trigger` (admin master) com validações em cascata: helper instalado, `confirm_version` bate com `target_tag`, versão alvo conhecida no canal atual (= `latest_lts` ou `latest_edge`), nada já em andamento, scheduler de backup livre nas últimas 2h.
+- `GET /api/version/update/status` (qualquer autenticado): estado do último update + flag `host_helper_disponivel` pra UI orientar quando não instalado.
+
+**Host (`scripts/host-update/`):**
+
+- [nexus-update.sh](scripts/host-update/nexus-update.sh): lê `request.json`, valida tag com regex semver, escreve `status=running`, faz `git fetch + checkout <tag> + docker compose up -d --build backend frontend`, escreve `success` ou `failed` com tail do log, remove o request.
+- [nexus-update.path](scripts/host-update/nexus-update.path): `PathChanged=/root/NEXUS-BETA/infra/update/request.json` + `TriggerLimitIntervalSec=30/Burst=3` (anti-loop).
+- [nexus-update.service](scripts/host-update/nexus-update.service): oneshot, `TimeoutStartSec=20min`, output pro journal.
+- [scripts/setup-update-helper.sh](scripts/setup-update-helper.sh): bootstrap idempotente. Instala script + units, faz `daemon-reload + enable --now`, cria o marker `host-ready` e valida com `is-active`. Deve ser rodado uma vez por servidor (sudo bash).
+
+**Frontend:**
+
+- Em [UpdateCard.jsx](frontend/src/components/UpdateCard.jsx):
+  - Painel de status do último update (queued/running/success/failed) com spinner + mensagem do host.
+  - Botão **"Atualizar pelo painel"** (verde, ícone foguete) só pra `admin` master, dentro do accordion de update disponível.
+  - Modal de confirmação: pede pra digitar a versão alvo (anti-acidente) e mostra aviso de "containers reiniciam".
+  - Quando o backend retorna `host_helper_disponivel=false`, mostra orientação pra rodar o `setup-update-helper.sh`.
+  - Polling de `GET /update/status` a cada 3s enquanto state ∈ {queued, running}; ao chegar em `success`, recarrega a checagem de versão (current pode ter mudado).
+
+**Infra:**
+
+- Volume novo no `docker-compose.yml`: `./infra/update:/var/lib/nexus/update` (canal de mensagens entre backend e host helper).
+
+**Pra ativar nos servidores existentes:**
+
+```bash
+cd /root/NEXUS-BETA
+git pull origin backup
+docker compose up -d --build backend frontend
+sudo bash scripts/setup-update-helper.sh
+```
+
+A última linha é nova (só pra Fase 2) e idempotente. Sem ela, o painel mostra orientação amarela em vez do botão.
+
+### Notas técnicas
+
+- O update via painel **não substitui** o comando SSH manual (que continua sendo a opção mais segura pra primeira instalação e pra debug). Cada um tem seu lugar.
+- O script no host roda com privilégios totais (systemd unit). A validação `regex semver` em duas camadas (backend ao escrever + script ao ler) é a defesa principal contra request file forjado.
+- Em caso de falha, o `mensagem` do `update_log` traz as últimas 80 linhas do log do script — debug sem precisar SSH.
+
 ## [2.3.0] - 2026-05-20
 
 ### Adicionado — Canais de atualização (LTS / Edge) + card "Atualização do sistema"
