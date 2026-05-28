@@ -16,8 +16,10 @@ Fallback: se o repo ainda não tem GitHub Releases criados (só tags), cai pro
 endpoint /tags como nas versões antigas — nesse caso ambos canais apontam
 pra mesma tag mais nova (sem distinção até o admin começar a criar releases).
 
-Repo privado: precisa GITHUB_TOKEN no .env (PAT com scope 'repo'). Sem token,
-endpoint retorna current=APP_VERSION, target=None — frontend não mostra banner.
+Auth GitHub (v2.5.1+): o token é **opcional**. Se o repo for público (caso atual),
+funciona anônimo com rate limit 60 req/h por IP — folga gigante porque o cache
+é 1h por canal (~24 req/dia por instância). Se um dia o repo voltar a ser
+privado, adiciona `GITHUB_TOKEN` no `.env` que o backend volta a usar.
 """
 from __future__ import annotations
 import logging
@@ -97,20 +99,22 @@ def _strip_v(tag: str) -> str:
 # ───────────────────────── HTTP wrappers GitHub ─────────────────────────
 
 def _gh_headers(accept: str = "application/vnd.github+json") -> dict:
-    return {
+    """Auth opcional — repo público funciona sem Bearer (rate limit 60/h por IP,
+    suficiente porque o cache TTL é 1h). Token apenas eleva o limite pra 5000/h."""
+    h = {
         "Accept": accept,
-        "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": f"nexus-backup/{APP_VERSION}",
     }
+    if settings.GITHUB_TOKEN:
+        h["Authorization"] = f"Bearer {settings.GITHUB_TOKEN}"
+    return h
 
 
 async def _fetch_releases() -> Optional[list[dict]]:
     """Retorna até 30 releases mais recentes (ordem: criação desc), ou None
-    se falhar/sem token. Lista pode estar vazia (repo sem releases — comum
-    pra projetos que só usaram tags até agora)."""
-    if not settings.GITHUB_TOKEN:
-        return None
+    se falhar. Lista pode estar vazia (repo sem releases — comum pra projetos
+    que só usaram tags até agora). Token opcional (vide _gh_headers)."""
     url = f"https://api.github.com/repos/{settings.GITHUB_REPO}/releases?per_page=30"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -128,9 +132,7 @@ async def _fetch_releases() -> Optional[list[dict]]:
 async def _fetch_tags() -> Optional[list[dict]]:
     """Fallback: lista de tags (sem metadado de release). Usado quando o repo
     ainda não tem GitHub Releases criados — instância ainda funciona, mas
-    sem distinção de canal."""
-    if not settings.GITHUB_TOKEN:
-        return None
+    sem distinção de canal. Token opcional."""
     url = f"https://api.github.com/repos/{settings.GITHUB_REPO}/tags?per_page=30"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

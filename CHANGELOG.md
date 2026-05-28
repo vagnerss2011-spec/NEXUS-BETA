@@ -12,6 +12,27 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.5.1] - 2026-05-20
+
+### Mudou — repositório agora é público; `GITHUB_TOKEN` virou opcional
+
+- O repo `vagnerss2011-spec/NEXUS-BETA` foi tornado **público** no GitHub. Auditoria pré-troca confirmou que `.env` nunca foi commitado, nenhum PAT/Fernet/segredo real entrou no histórico, e `.env.example` só tem placeholders.
+- `services/version_check.py`: token `Authorization: Bearer` só é enviado **se** `GITHUB_TOKEN` estiver setado no `.env`; senão, vai anônimo. Rate limit anônimo da API GitHub (60 req/h por IP) é folgado pra nosso caso porque o cache é 1h por canal (~24 req/dia por instância). Quem mantém o token continua usando o limite estendido (5000/h). Quem remove, fica funcionando igualzinho.
+- `CLAUDE.md` limpo: removida menção a credencial de DEV específica (`Admin@2025`), substituída por nota de "cada ambiente tem suas credenciais, não há senha padrão neste repositório".
+
+### Notas operacionais
+
+Pra remover o token dos servidores existentes (opcional, mas recomendado pra parar de pensar em rotação):
+
+```bash
+sed -i '/^GITHUB_TOKEN=/d' /root/NEXUS-BETA/.env
+docker compose restart backend
+```
+
+### Aviso de segurança
+
+A senha `Admin@2025` que aparecia no `CLAUDE.md` ficou no histórico do git mesmo após esta limpeza (commits anteriores). Se ela ainda destranca algum ambiente (dev local, prod), troque por outra. Não vamos reescrever histórico via `git filter-repo` (overkill nesse caso) — a recomendação é considerar a senha queimada e rotacionar onde estiver em uso.
+
 ## [2.5.0] - 2026-05-20
 
 ### Adicionado — Rollback automático no auto-update (Fase 3)
