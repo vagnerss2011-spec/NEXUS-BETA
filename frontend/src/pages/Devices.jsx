@@ -3,13 +3,18 @@ import { Plus, Pencil, Trash2, Play, Router, X, Loader2, CheckCircle, XCircle, F
 import api, { getCurrentEmpresa } from '../services/api'
 import StatusBadge from '../components/StatusBadge'
 
-const FABRICANTES = ['mikrotik', 'mikrotik_v7', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'vsolutions', 'outro']
+const FABRICANTES = ['mikrotik', 'mikrotik_v7', 'huawei', 'ubiquiti', 'intelbras', 'datacom', 'datacom_dm1200', 'cisco', 'juniper', 'zte', 'nokia', 'fiberhome', 'vsolutions', 'outro']
 
 // Label customizado pra fabricantes cujo nome interno (snake_case) ficaria
 // estranho ao só capitalizar. Sem entrada → cai no capitalize CSS.
 const FABRICANTE_LABEL = {
   mikrotik_v7: 'Mikrotik V7',
   vsolutions: 'VSolutions',
+  // Datacom tem duas CLIs incompatíveis: DmOS (DM4xxx novo, login já operacional)
+  // e a legada Cisco-like do DM1200 (precisa de `enable` antes do show
+  // running-config). São fabricantes separados pra coletar cada um do jeito certo.
+  datacom: 'Datacom DmOS',
+  datacom_dm1200: 'Datacom DM1200',
   // ZTE C3XX: família C300/C320/C600 (firmware ZXA10). C6XX Titan é outra
   // família e ainda não tem suporte — quando entrar, vira fabricante próprio.
   zte: 'ZTE C3XX',
@@ -128,6 +133,12 @@ copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-intelbras.cfg`,
     titulo: 'Datacom DmOS',
     cmd: `copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-datacom.cfg`,
   },
+  datacom_dm1200: {
+    titulo: 'Datacom DM1200 (CLI legada)',
+    cmd: `# DM1200 usa CLI Cisco-like — precisa entrar em modo privilegiado antes:
+enable
+copy running-config ftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-dm1200.cfg`,
+  },
   cisco: {
     titulo: 'Cisco IOS / IOS-XE',
     cmd: `# Modo simples (manual ou via EEM applet diário):
@@ -233,6 +244,10 @@ copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-cisco.cfg`,
 commit`,
   datacom:   `# Datacom DmOS — SFTP em firmwares recentes:
 copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-datacom.cfg`,
+  datacom_dm1200: `# Datacom DM1200 (CLI legada) — em modo privilegiado:
+enable
+copy running-config sftp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-dm1200.cfg
+# (SFTP varia por firmware do DM1200; se não houver, use FTP ou TFTP.)`,
   intelbras: `# Cisco-like: copy via scp:// na maioria das builds.
 copy running-config scp://<USUARIO>:<SENHA>@<SERVIDOR>/backup-intelbras.cfg`,
   zte:       `# ZTE ZXR10 (switch/router — firmware recente):
@@ -278,6 +293,9 @@ backup configuration to tftp <SERVIDOR> backup-huawei.cfg`,
 # (responde: Address? <SERVIDOR>  Filename? backup-cisco.cfg)`,
   intelbras: `copy running-config tftp://<SERVIDOR>/backup-intelbras.cfg`,
   datacom:   `copy running-config tftp://<SERVIDOR>/backup-datacom.cfg`,
+  datacom_dm1200: `# Datacom DM1200 (CLI legada) — em modo privilegiado:
+enable
+copy running-config tftp://<SERVIDOR>/backup-dm1200.cfg`,
   juniper:   `# Juniper não tem upload TFTP nativo do JunOS — use FTP ou SFTP.`,
   zte:       `# ZTE ZXR10:
 copy running-config tftp://<SERVIDOR>/backup-zte.cfg
@@ -462,6 +480,12 @@ config
 ntp server <SERVIDOR>
 clock timezone America/Sao_Paulo
 commit`,
+  datacom_dm1200: `# Datacom DM1200 (CLI legada Cisco-like):
+enable
+configure terminal
+ ntp server <SERVIDOR>
+ clock timezone BRT -3
+end`,
   intelbras: `# Intelbras (Cisco-like):
 configure terminal
  ntp server <SERVIDOR>

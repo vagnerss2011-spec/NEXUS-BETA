@@ -63,6 +63,10 @@ DEVICE_TYPES_SSH = {
     DeviceVendor.ubiquiti:  "ubiquiti_edge",
     DeviceVendor.intelbras: "cisco_ios",
     DeviceVendor.datacom:   "cisco_ios",
+    # DM1200: handler dedicado (_run_datacom_netmiko enable_first=True) usa o
+    # driver `generic` pra evitar os auto-comandos do cisco_ios que a CLI legada
+    # Datacom rejeita. Mapa mantido coerente — mas o dispatch nunca cai aqui.
+    DeviceVendor.datacom_dm1200: "generic",
     DeviceVendor.cisco:     "cisco_ios",
     DeviceVendor.juniper:   "juniper_junos",
     DeviceVendor.zte:        "zte_zxros",      # ZTE ZXR10/ZXA10 — CLI Cisco-like
@@ -79,6 +83,7 @@ DEVICE_TYPES_TELNET = {
     DeviceVendor.ubiquiti:  "generic_termserver",
     DeviceVendor.intelbras: "cisco_ios_telnet",
     DeviceVendor.datacom:   "cisco_ios_telnet",
+    DeviceVendor.datacom_dm1200: "generic_termserver",  # vide nota em DEVICE_TYPES_SSH
     DeviceVendor.cisco:     "cisco_ios_telnet",
     DeviceVendor.juniper:   "juniper_junos_telnet",
     DeviceVendor.zte:        "zte_zxros_telnet",
@@ -97,6 +102,7 @@ COMMANDS = {
     DeviceVendor.ubiquiti:  "show configuration",
     DeviceVendor.intelbras: "show running-config",
     DeviceVendor.datacom:   "show running-config",
+    DeviceVendor.datacom_dm1200: "show running-config",
     DeviceVendor.cisco:     "show running-config",
     DeviceVendor.juniper:   "show configuration | display set",
     DeviceVendor.zte:        "show running-config",
@@ -151,10 +157,32 @@ def _is_telnet_banner_error(msg: str) -> bool:
         or "invalid start byte" in msg_lower
     )
 
-def _run_datacom_netmiko(device: Device) -> tuple[str, str]:
+def _run_datacom_netmiko(device: Device, enable_first: bool = False) -> tuple[str, str]:
+    """Coleta config de equipamentos Datacom via loop manual (mesmo motivo do
+    Huawei/ZTE: o send_command do Netmiko quebra a detecção de prompt em config
+    grande / prompt dinâmico).
+
+    enable_first=True (DM1200): a CLI legada Cisco-like cai em modo NÃO
+    privilegiado no login (prompt `>`), e `show running-config` só responde
+    depois de `enable`. O DmOS novo (datacom) não tem `enable` e entra direto em
+    modo operacional, por isso só o vendor datacom_dm1200 passa enable_first=True.
+    """
     is_telnet = device.protocolo == Protocolo.telnet
+    if enable_first:
+        # DM1200 (CLI legada DmSwitch-like): driver `generic`, NÃO `cisco_ios`.
+        # O session_preparation do cisco_ios auto-envia `terminal width 511` +
+        # `terminal length 0` no connect — comandos que a CLI da Datacom não
+        # implementa (ela usa `terminal paging`). O equipamento responde
+        # "% Invalid command" e isso pode desincronizar a detecção de prompt do
+        # Netmiko ANTES do nosso loop manual rodar — exatamente o bug
+        # documentado na ZTE C320 (vide _run_zte_netmiko). O `generic` só lê o
+        # prompt no setup; paginação + coleta ficam 100% no loop manual abaixo.
+        device_type = "generic_termserver" if is_telnet else "generic"
+    else:
+        # DmOS (datacom): comportamento inalterado — cisco_ios como antes.
+        device_type = "cisco_ios_telnet" if is_telnet else "cisco_ios"
     conn = {
-        "device_type": "cisco_ios_telnet" if is_telnet else "cisco_ios",
+        "device_type": device_type,
         "host": _clean_host(device.ip),
         "port": device.porta,
         "username": device.usuario_ssh,
@@ -165,7 +193,39 @@ def _run_datacom_netmiko(device: Device) -> tuple[str, str]:
         **_build_auth_kwargs(device),
     }
     with ConnectHandler(**conn) as net:
-        for disable_cmd in ("terminal length 0", "screen-length 0 temporary", "screen-length 0"):
+        if enable_first:
+            # Entra em modo privilegiado. O cadastro do DM1200 assume `enable`
+            # SEM senha (vide opção escolhida no painel), então só mandamos o
+            # comando. Defesa: se algum firmware estiver com enable password
+            # configurada, ele responde "Password:" — nesse caso reusamos a
+            # senha de login (auth por senha) como melhor-esforço pra não travar
+            # o canal aguardando input. send_command_timing não exige detecção
+            # de prompt (lê por tempo), coerente com o resto deste handler.
+            try:
+                enable_out = net.send_command_timing("enable", delay_factor=2)
+                if (
+                    "assword" in enable_out
+                    and device.auth_method == AuthMethod.password
+                    and device.senha_ssh_enc
+                ):
+                    net.send_command_timing(decrypt(device.senha_ssh_enc), delay_factor=2)
+            except Exception:
+                # Falha no enable não aborta: segue pro show running-config —
+                # se de fato não tiver privilégio, o output vem vazio e o
+                # tratamento de "Sem resposta do equipamento" abaixo cobre.
+                pass
+        # Datacom DmSwitch/DM1200 desabilita paginação com `no terminal paging`
+        # (forma validada pelo jazigo/oxidized contra DmSwitch real). As formas
+        # Cisco/ZTE ficam como fallback pra firmware variante. Tenta todas
+        # (try-all, sem break); o handler de `--More--` no loop abaixo é a rede
+        # de segurança final caso nenhuma pegue. No DmOS (datacom) a lista segue
+        # exatamente a de antes.
+        if enable_first:
+            disable_cmds = ("no terminal paging", "terminal paging disable",
+                            "terminal length 0", "screen-length 0 temporary", "screen-length 0")
+        else:
+            disable_cmds = ("terminal length 0", "screen-length 0 temporary", "screen-length 0")
+        for disable_cmd in disable_cmds:
             try:
                 net.send_command_timing(disable_cmd, delay_factor=2)
             except Exception:
@@ -401,6 +461,10 @@ def run_backup(device: Device) -> tuple[str, str]:
 
         if device.fabricante == DeviceVendor.datacom:
             return _run_datacom_netmiko(device)
+
+        if device.fabricante == DeviceVendor.datacom_dm1200:
+            # DM1200: mesmo coletor do datacom, mas com `enable` antes (CLI legada).
+            return _run_datacom_netmiko(device, enable_first=True)
 
         if device.fabricante == DeviceVendor.huawei:
             return _run_huawei_netmiko(device)

@@ -10,7 +10,15 @@ Política de bump:
 
 ## [Não lançado]
 
-_(linhas que vão entrar na próxima tag)_
+### Adicionado — fabricante Datacom DM1200 (CLI legada com `enable`)
+
+- Novo fabricante **Datacom DM1200** no dropdown de dispositivos. O DM1200 usa a CLI Cisco-like legada (não o DmOS), que cai em modo **não-privilegiado** no login — `show running-config` só responde depois de `enable`. O coletor (`_run_datacom_netmiko` com `enable_first=True`) manda `enable` antes de desabilitar paginação e puxar a config.
+- O `enable` é assumido **sem senha** (caso do parque atual). Defesa: se o firmware responder `Password:`, reusa a senha de login (auth por senha) como melhor-esforço pra não travar o canal.
+- Coleta usa o driver **`generic`** do Netmiko (não `cisco_ios`): o `session_preparation` do `cisco_ios` auto-envia `terminal width 511`/`terminal length 0` no connect, que a CLI Datacom rejeita (`% Invalid command`) e pode desincronizar a detecção de prompt — mesmo problema já tratado na ZTE C320.
+- Paginação desabilitada com **`no terminal paging`** (forma validada do DmSwitch, ref. jazigo/oxidized), com as formas Cisco/ZTE como fallback e o handler de `--More--` como rede de segurança final.
+- Separado do `datacom` (DmOS) existente de propósito: o DmOS **não tem** `enable`, então mandar o comando nele seria errado. Mantém os devices `Datacom DmOS` já cadastrados intactos.
+- Frontend: dropdown agora distingue **Datacom DmOS** × **Datacom DM1200**; exemplos de push (FTP/SFTP/TFTP) e NTP do DM1200 incluem o `enable`.
+- Migração idempotente em `main.py` (`ALTER TYPE devicevendor ADD VALUE IF NOT EXISTS 'datacom_dm1200'`) — sem rebuild de banco.
 
 ## [2.5.1] - 2026-05-20
 

@@ -16,7 +16,8 @@ class DeviceVendor(str, enum.Enum):
     huawei = "huawei"
     ubiquiti = "ubiquiti"
     intelbras = "intelbras"
-    datacom = "datacom"
+    datacom = "datacom"            # DmOS (DM4xxx novo) — login já cai em modo operacional, sem `enable`
+    datacom_dm1200 = "datacom_dm1200"  # DM1200 (CLI Cisco-like legada) — precisa de `enable` antes do show running-config
     cisco = "cisco"
     juniper = "juniper"
     zte = "zte"

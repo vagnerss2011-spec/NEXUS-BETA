@@ -43,8 +43,9 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text(f"ALTER TYPE tipoatividade ADD VALUE IF NOT EXISTS '{ev}'"))
             except Exception:
                 pass
-        # Novos fabricantes (ZTE, Nokia, Fiberhome, VSolutions, Mikrotik v7)
-        for vendor in ("zte", "nokia", "fiberhome", "vsolutions", "mikrotik_v7"):
+        # Novos fabricantes (ZTE, Nokia, Fiberhome, VSolutions, Mikrotik v7, Datacom DM1200)
+        # datacom_dm1200: variante legada do datacom (CLI Cisco-like) que exige `enable`.
+        for vendor in ("zte", "nokia", "fiberhome", "vsolutions", "mikrotik_v7", "datacom_dm1200"):
             try:
                 await conn.execute(text(f"ALTER TYPE devicevendor ADD VALUE IF NOT EXISTS '{vendor}'"))
             except Exception:
