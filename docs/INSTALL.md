@@ -2,7 +2,7 @@
 
 Guia ponta-a-ponta pra subir uma instância nova. Pareado com [scripts/install-nexus-backup.sh](../scripts/install-nexus-backup.sh): o script cobre §4–§5; o restante (provisionamento, SSH, DNS, certbot, primeiro admin) é manual e está aqui.
 
-> **Atalho:** se você só precisa do passo-a-passo simples pra mover SSH pra 2288 e configurar deploy key do GitHub privado antes do install, ver [QUICKSTART.md](QUICKSTART.md).
+> **Atalho:** se você só precisa do passo-a-passo simples pra mover SSH pra 2288 e baixar o script antes do install, ver [QUICKSTART.md](QUICKSTART.md). Desde a v2.5.1 o repo é **público** — não precisa mais de deploy key nem PAT pra clonar.
 
 ---
 
@@ -142,7 +142,7 @@ Antes dos passos, faz **pré-flight de conectividade**: testa DNS (`getent ahost
 O que ele faz, em ordem (9 passos):
 1. **Sistema base** — locale `pt_BR.UTF-8` + timezone `America/Sao_Paulo` + apt deps (git, ufw, fail2ban, chrony, etc.)
 2. **Docker Engine** — repo oficial Docker + `/etc/docker/daemon.json` com `bip 10.17.0.1/24` + pool `10.18.0.0/16` + IPv6
-3. **Clone do repo** — em `/root/NEXUS-BETA` na tag mais recente. **Default: SSH com deploy key** (ver §3.5 abaixo). Pra HTTPS público use `REPO_URL=https://...`
+3. **Clone do repo** — em `/root/NEXUS-BETA` na tag mais recente. **Default: HTTPS público** (clone anônimo, sem credencial — repo é público desde a v2.5.1). Só pra **fork privado** use `REPO_URL=git@github.com:...` e o script gera a deploy key (ver §3.5 abaixo).
 4. **Diretórios persistentes** — `infra/ftp-logs/ftp-auth.log` e `infra/state/` (criados antes do fail2ban porque o jail `nexus-ftp` precisa do log file existir no startup)
 5. **Chrony NTP** — `allow` RFC1918+RFC6598 + ratelimit. Faixas adicionais via env var `NEXUS_EXTRA_CIDRS=cidr1,cidr2,...`
 6. **Fail2ban** — action `docker-allports` (com bloco `[Init]` definindo `iptables=/usr/sbin/iptables` — necessário em Trixie), filter+jail `nexus-ftp` apontando pro log do passo 4
@@ -157,16 +157,21 @@ O que ele faz, em ordem (9 passos):
 # pelo UFW na 123/udp. Default: nenhuma (só RFC1918+RFC6598).
 NEXUS_EXTRA_CIDRS=200.150.30.0/24,45.7.68.0/22 bash /tmp/install.sh -i
 
-# Override do repo (default git@github.com:vagnerss2011-spec/NEXUS-BETA.git).
-# Use HTTPS se o repo for público:
-REPO_URL=https://github.com/vagnerss2011-spec/NEXUS-BETA.git bash /tmp/install.sh -i
+# Override do repo. O default JÁ é o HTTPS público oficial
+# (https://github.com/vagnerss2011-spec/NEXUS-BETA.git) — clone anônimo.
+# Só precisa setar isto se for clonar de um FORK PRIVADO via SSH:
+REPO_URL=git@github.com:SEU-USER/SEU-FORK.git bash /tmp/install.sh -i
 ```
 
 > Se você precisar recriar do zero, apaga `/etc/docker/daemon.json`, `/etc/fail2ban/jail.local`, `/root/NEXUS-BETA` e roda de novo.
 
-### §3.5 — Deploy key SSH (repo privado)
+### §3.5 — Deploy key SSH (só fork privado — legado)
 
-Quando o passo 3 do script roda com `REPO_URL` SSH (default), ele:
+> O repo oficial é **público**: o passo 3 clona via HTTPS anônimo e **nada
+> abaixo se aplica**. Esta seção só interessa se você roda o install apontando
+> pra um **fork privado** via `REPO_URL=git@github.com:...`.
+
+Quando o passo 3 do script roda com `REPO_URL` SSH (fork privado), ele:
 1. Gera `/root/.ssh/nexus_deploy_key` se não existir (ed25519, sem passphrase)
 2. Configura `/root/.ssh/config` pra rotear `github.com` via essa chave
 3. Testa autenticação no GitHub com `ssh -T git@github.com`

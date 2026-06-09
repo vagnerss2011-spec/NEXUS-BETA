@@ -1,11 +1,15 @@
 # Quickstart — Preparar a VM antes do install
 
-Os 2 passos manuais que você precisa fazer **antes** de rodar `install-nexus-backup.sh`:
+> **Mudou na v2.5.1:** o repositório agora é **público**. Não precisa mais de
+> deploy key nem de PAT pra baixar o código — o clone e o `curl` do script
+> funcionam **sem credencial nenhuma**. Este doc ficou bem mais curto.
+
+Sobrou **1 passo manual** que você precisa fazer **antes** de rodar
+`install-nexus-backup.sh`:
 
 1. **Mover o SSH do host pra porta 2288** (a porta 22 vai ficar pro container SFTP do app)
-2. **Liberar o acesso do servidor ao repo privado do GitHub** (deploy key)
 
-Pra contexto completo (provisionamento da VM, DNS, certbot, criar admin, etc.) ver [INSTALL.md](INSTALL.md). Este doc cobre só esses 2 pontos.
+Pra contexto completo (provisionamento da VM, DNS, certbot, criar admin, etc.) ver [INSTALL.md](INSTALL.md). Este doc cobre só a preparação mínima.
 
 ---
 
@@ -61,131 +65,40 @@ Se a VM está atrás de um firewall que filtra portas (Proxmox firewall, edge ro
 
 ---
 
-## 2. Acesso ao repo privado do GitHub (deploy key)
+## 2. Baixar o `install-nexus-backup.sh`
 
-### Como funciona
-
-O servidor precisa autenticar no GitHub pra clonar e atualizar o código. Como o repo é **privado**, não dá pra usar `git clone https://...` sem credencial. A abordagem padrão:
-
-- **Deploy key** = par de chaves SSH dedicado a um repo (read-only, opcionalmente read-write). A public key fica cadastrada no GitHub no escopo do repo (não da conta inteira) — se vazar, só compromete esse repo.
-- O `install-nexus-backup.sh` **gera a chave automaticamente** no passo 3. Você só precisa **colar a public key** no GitHub.
-
-### Passo a passo
-
-Quando você rodar `bash /tmp/install.sh --interactive` e chegar no **Passo 3 (Clone do repo)**, ele vai fazer 3 coisas:
-
-1. Gerar `/root/.ssh/nexus_deploy_key` (ed25519, sem passphrase) se não existir.
-2. Configurar `/root/.ssh/config` pra rotear `github.com` via essa chave.
-3. Testar autenticação com `ssh -T git@github.com`.
-
-Na primeira execução, o teste vai **falhar** (a chave ainda não está cadastrada). O script vai imprimir algo assim:
-
-```
-! deploy key NÃO está autorizada no repo. Cole esta public key em:
-!   https://github.com/<owner>/<repo>/settings/keys → Add deploy key (read-only)
-
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... deploy-key@nexus-backup-cliente
-
-  Pressione Enter quando terminar de colar (ou Ctrl-C pra abortar):
-```
-
-**Não pressione Enter ainda.** Faça o seguinte primeiro:
-
-1. **Selecione e copie** a linha `ssh-ed25519 AAAAC...` inteira (incluindo o `deploy-key@...` no final).
-2. Abra no navegador: **https://github.com/vagnerss2011-spec/NEXUS-BETA/settings/keys**
-3. Clica em **"Add deploy key"** (botão verde no canto superior direito).
-4. Preenche:
-   - **Title:** algo identificável, ex: `nexus-backup-cliente-X` ou o hostname da VM.
-   - **Key:** cola a public key copiada.
-   - **Allow write access:** ❌ **deixa desmarcado** (read-only é suficiente — o servidor só vai PUXAR código, nunca empurrar).
-5. Clica **"Add key"**.
-6. Volta no terminal da VM e **pressione Enter** pra o script continuar.
-
-Pronto. A partir desse momento o servidor consegue:
-- `git clone` no install inicial
-- `git fetch && git checkout v2.X.Y` em updates futuros
-
-### Como ficou no servidor
-
-Pra conferir depois que tudo funcionou:
-
-```bash
-# A chave privada (NÃO COMPARTILHAR — protegida por chmod 600)
-ls -la /root/.ssh/nexus_deploy_key
-
-# A pública (essa é a que ficou no GitHub)
-cat /root/.ssh/nexus_deploy_key.pub
-
-# Config do SSH apontando github.com pra essa chave
-cat /root/.ssh/config
-
-# Teste manual
-ssh -T git@github.com
-# Esperado: "Hi vagnerss2011-spec/NEXUS-BETA! You've successfully authenticated, but GitHub does not provide shell access."
-```
-
-### Revogar acesso depois (se a VM for descomissionada)
-
-Volta na mesma URL do GitHub:
-**https://github.com/vagnerss2011-spec/NEXUS-BETA/settings/keys**
-
-Acha a deploy key da VM pelo Title e clica **Delete**. A chave fica imediatamente sem acesso — qualquer `git fetch` futuro daquela VM vai dar `Permission denied`.
-
----
-
-## Depois disso
-
-Com SSH na 2288 ✅, agora precisa baixar o `install-nexus-backup.sh` pra dentro da VM. **Atenção:** como o repo é privado, `curl https://raw.githubusercontent.com/...` retorna **404 sem autenticação** — você precisa usar um dos 3 caminhos abaixo.
-
-### Opção 1 — Curl com PAT temporário (mais rápido)
-
-Cria um PAT (Personal Access Token) descartável no GitHub e usa direto no `curl`. Depois descarta o token.
-
-1. Vai em **https://github.com/settings/tokens** → **Generate new token (classic)**.
-2. Marca só o scope **`repo`** (read). Expiração: **7 days** já basta — você só precisa dele pra esse comando.
-3. Copia o token (formato `ghp_xxxxxxxxxx...`).
-4. Na VM, roda:
+Com o repo público, basta um `curl` anônimo direto no `raw.githubusercontent.com` — **sem token, sem deploy key**.
 
 ```bash
 ssh -p 2288 root@<IP_DA_VM>
 
-curl -fsSL \
-  -H "Authorization: token ghp_xxxxxxxxxx" \
-  -H "Accept: application/vnd.github.raw" \
-  https://api.github.com/repos/vagnerss2011-spec/NEXUS-BETA/contents/scripts/install-nexus-backup.sh \
-  -o /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/vagnerss2011-spec/NEXUS-BETA/backup/scripts/install-nexus-backup.sh -o /tmp/install.sh
 
 bash /tmp/install.sh --interactive
 ```
 
-5. Quando terminar a instalação, **revoga o PAT** em https://github.com/settings/tokens (clica "Delete" na linha dele). A partir daí o servidor só tem acesso via deploy key (que tem scope só do repo, mais restrito).
+O script clona o repo em `/root/NEXUS-BETA` (HTTPS público, clone anônimo) e faz checkout na última tag. Não pergunta credencial nenhuma.
 
-### Opção 2 — SCP do seu computador (sem PAT)
+### Fallbacks (rede restrita)
 
-Se você já tem o repo clonado no seu computador, copia o script via SCP — sem precisar de token nenhum.
+Se a VM estiver num link que bloqueia `raw.githubusercontent.com` (filtro de proxy, etc.), use um destes — nenhum precisa de credencial:
 
-No **seu computador** (não na VM):
+**SCP do seu computador** (se você já tem o repo clonado localmente):
 
 ```bash
-# Manda o script pro /tmp da VM
+# No SEU computador:
 scp -P 2288 scripts/install-nexus-backup.sh root@<IP_DA_VM>:/tmp/install.sh
-
-# Conecta e roda
 ssh -p 2288 root@<IP_DA_VM>
 bash /tmp/install.sh --interactive
 ```
 
-### Opção 3 — Cola o script via heredoc (sem rede)
-
-Útil quando a VM ainda não tem `curl` ou está num link com filtro pesado. No **seu computador**, vê o conteúdo do script:
+**Colar via heredoc** (VM sem `curl` ou link muito filtrado):
 
 ```bash
+# No SEU computador, copia o conteúdo:
 cat scripts/install-nexus-backup.sh
-```
 
-Copia tudo, conecta na VM e cola dentro de:
-
-```bash
+# Na VM, cola dentro de:
 ssh -p 2288 root@<IP_DA_VM>
 cat > /tmp/install.sh <<'NEXUSEOF'
 <COLA O CONTEÚDO INTEIRO AQUI>
@@ -197,8 +110,20 @@ bash /tmp/install.sh --interactive
 
 ---
 
+## (Legado) Fork privado com deploy key
+
+Só relevante se você mantém um **fork privado** do projeto. O repo oficial é público, então pule esta seção.
+
+Nesse caso, rode o install apontando pro fork via SSH e o script cuida da deploy key automaticamente:
+
+```bash
+REPO_URL=git@github.com:SEU-USER/SEU-FORK.git bash /tmp/install.sh --interactive
+```
+
+No passo 3 (Clone do repo) ele gera `/root/.ssh/nexus_deploy_key`, configura o `~/.ssh/config` e, se a chave ainda não estiver cadastrada, imprime a public key pra você colar em **Settings → Deploy Keys → Add deploy key** (read-only) do seu fork. Depois pressione Enter pra continuar.
+
+---
+
 ## A partir daqui
 
-O script rodando, segue o fluxo do passo 3 (deploy key) descrito acima. Quando ele perguntar a public key, você cola no GitHub e pressiona Enter.
-
-Depois que o script terminar (9 passos), o resto está em [INSTALL.md a partir da §5](INSTALL.md#§5--editar-o-env): editar `.env`, certbot, `docker compose up`, criar admin.
+Com SSH na 2288 ✅ e o script baixado, é só rodar `bash /tmp/install.sh --interactive` e seguir os 9 passos. Depois que o script terminar, o resto está em [INSTALL.md a partir da §5](INSTALL.md#§5--editar-o-env): editar `.env`, certbot, `docker compose up`, criar admin.
