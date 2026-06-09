@@ -11,8 +11,10 @@
 #                                                 # pedir hora ao chrony (NTP) e a
 #                                                 # passar pelo UFW na 123/udp.
 #                                                 # Default: nenhuma (só RFC1918+RFC6598).
-#   REPO_URL=git@github.com:user/repo.git         # override do repo (default SSH).
-#                                                 # Use https://... se for repo público.
+#   REPO_URL=https://github.com/user/repo.git     # override do repo (default já é
+#                                                 # o HTTPS público oficial). Use
+#                                                 # git@github.com:... só pra fork privado
+#                                                 # (aí o passo 3 cria a deploy key).
 #
 # Pré-requisitos (FAZER MANUALMENTE ANTES — ver docs/INSTALL.md):
 #   1. SSH do host movido pra porta 2288 (libera 22 pro SFTP push do app).
@@ -21,9 +23,11 @@
 #   3. IP estático configurado, DNS público apontando pro IP (resolvendo).
 #   4. Portas liberadas no firewall de borda (80, 443, 21, 22, 69/udp, 2288,
 #      30000-30099 tcp+udp, 123/udp).
-#   5. Repo privado: gerar deploy key SSH e cadastrar em
+#   5. (Só fork privado) gerar deploy key SSH e cadastrar em
 #      github.com/<owner>/<repo>/settings/keys ANTES do passo 3 (clone).
-#      → este script gera a key se não existir e te dá a public key pra colar.
+#      → o repo oficial é PÚBLICO: clone anônimo, NADA disso é necessário.
+#      → se você rodar com REPO_URL=git@..., o script gera a key e te mostra a
+#        public key pra colar.
 #
 # Antes dos passos, faz pré-flight de conectividade (DNS, github.com,
 # api.ipify.org pra detectar IP público). Falha cedo se algo crítico
@@ -128,7 +132,7 @@ print_header() {
     note "Cada passo vai mostrar o que faz e perguntar antes de executar."
     note "Opções: [s]im executa  [n]ão pula  [a]ll executa todos sem perguntar  [q]uit sai"
   else
-    note "Modo automático: todos os 8 passos serão executados em sequência."
+    note "Modo automático: todos os 9 passos serão executados em sequência."
     note "(Use --interactive pra confirmar cada passo.)"
   fi
 }
@@ -195,8 +199,10 @@ else
   warn "Não consegui detectar IP público (api.ipify.org) — vou deixar FTP_MASQUERADE_ADDRESS vazio pra você preencher"
 fi
 
-# REPO_URL: default SSH (deploy key). Override pra HTTPS se repo for público.
-REPO_URL="${REPO_URL:-git@github.com:vagnerss2011-spec/NEXUS-BETA.git}"
+# REPO_URL: default HTTPS anônimo (repo é público desde v2.5.1 — clone sem
+# credencial). Override pra SSH (git@...) se você clonar de um fork privado;
+# nesse caso o passo 3 ainda gera/usa a deploy key automaticamente.
+REPO_URL="${REPO_URL:-https://github.com/vagnerss2011-spec/NEXUS-BETA.git}"
 REPO_DIR='/root/NEXUS-BETA'
 
 # ═════════════════════════ [1] Sistema base ═════════════════════════
@@ -308,14 +314,13 @@ fi
 if confirm_step "Clone do repo NEXUS BACKUP em $REPO_DIR" \
 "  Clona o repo do GitHub em $REPO_DIR e faz checkout na tag mais
   recente (v* mais alta por sort de versão).
-  Default: REPO_URL=$REPO_URL  (SSH com deploy key).
-  Pra usar HTTPS (repo público): rode com REPO_URL=https://github.com/...
+  Default: REPO_URL=$REPO_URL  (HTTPS público — clone anônimo, sem credencial).
   Se o repo já existir, só atualiza pra última tag.
   Branch mainline é 'backup'; tags estáveis são vMAJOR.MINOR.PATCH.
-  REPO PRIVADO + SSH: você precisa cadastrar a deploy key no GitHub antes.
-  Vou gerar a chave automaticamente se não existir e te mostrar a public key."; then
+  Fork PRIVADO via SSH (REPO_URL=git@...): vou gerar a deploy key
+  automaticamente se não existir e te mostrar a public key pra cadastrar."; then
 
-  # Setup deploy key SSH se REPO_URL for SSH (default)
+  # Setup deploy key SSH só se REPO_URL for SSH (fork privado; não é o default)
   if [[ "$REPO_URL" =~ ^git@ ]]; then
     DEPLOY_KEY=/root/.ssh/nexus_deploy_key
     if [ ! -f "$DEPLOY_KEY" ]; then
@@ -427,14 +432,21 @@ EOF
     IFS=',' read -ra CIDRS <<< "$NEXUS_EXTRA_CIDRS"
     for cidr in "${CIDRS[@]}"; do
       cidr="${cidr// /}"  # trim spaces
-      [ -n "$cidr" ] && echo "allow $cidr" >> "$CHRONY_CONF"
+      [ -z "$cidr" ] && continue
+      # Valida o formato a.b.c.d/nn — CIDR malformado aqui também quebraria o UFW no passo 7.
+      if [[ "$cidr" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]]; then
+        echo "allow $cidr" >> "$CHRONY_CONF"
+      else
+        warn "NEXUS_EXTRA_CIDRS: CIDR inválido ignorado (chrony): '$cidr'"
+      fi
     done
   fi
   cat >> "$CHRONY_CONF" <<'EOF'
 # Anti-abuso: até 16 reqs em rajada por IP, 1/s sustentado
 ratelimit interval 1 burst 16 leak 2
 EOF
-  systemctl restart chrony
+  # NTP não é crítico pro stack subir — se o conf ficar inválido não aborta o install (set -e).
+  systemctl restart chrony || warn "chrony não reiniciou — revise $CHRONY_CONF"
   ok "chrony.conf atualizado + restart"
   note "  $(grep -cE '^allow' "$CHRONY_CONF") faixas allow ativas"
 fi
@@ -454,6 +466,9 @@ if confirm_step "Fail2ban (DOCKER-USER chain pro container FTP)" \
     /etc/fail2ban/jail.local                     (jails: sshd na 2288 +
         nexus-ftp tail-ando /root/NEXUS-BETA/infra/ftp-logs/ftp-auth.log)
   jail nexus-ftp: maxretry=3, findtime=10m, bantime=24h."; then
+
+  # Restart do fail2ban é feito UMA vez no fim, se QUALQUER um dos 3 arquivos mudar.
+  F2B_CHANGED=0
 
   F2B_ACTION='/etc/fail2ban/action.d/docker-allports.conf'
   # Atualiza se action não existe OU se falta o bloco [Init] (versão antiga)
@@ -484,6 +499,7 @@ actionunban = <iptables> -D f2b-<name> -s <ip> -j DROP
 iptables = /usr/sbin/iptables
 EOF
     ok "action docker-allports criada/atualizada (com [Init])"
+    F2B_CHANGED=1
   else
     skip "action docker-allports (já tem [Init])"
   fi
@@ -499,6 +515,7 @@ failregex = ^\s*\[(WARNING|ERROR)\] AUTH_FAIL ip=<HOST> .*$
 ignoreregex =
 EOF
     ok "filter nexus-ftp criado"
+    F2B_CHANGED=1
   else
     skip "filter nexus-ftp"
   fi
@@ -528,16 +545,27 @@ findtime = 10m
 bantime  = 24h
 banaction = docker-allports
 EOF
+    ok "jail.local escrito"
+    F2B_CHANGED=1
+  else
+    skip "jail.local (já tem [nexus-ftp])"
+  fi
+
+  # Restart UMA vez se QUALQUER dos 3 arquivos (action/filter/jail) mudou — NÃO só o jail.
+  # Num re-run/upgrade que reescreve só a action (ex.: pra adicionar o [Init]), o fix
+  # ficaria no disco mas dormente (action quebrada segue em memória). Mesmo padrão do
+  # NEEDS_RESTART do passo 2 (Docker).
+  if [ "${F2B_CHANGED:-0}" = "1" ]; then
     systemctl enable --now fail2ban >/dev/null 2>&1
     systemctl restart fail2ban
     sleep 2
     if systemctl is-active --quiet fail2ban; then
-      ok "jail.local + restart fail2ban (active)"
+      ok "fail2ban recarregado (active)"
     else
       warn "fail2ban falhou ao subir — checa: journalctl -u fail2ban --no-pager -n 20"
     fi
   else
-    skip "jail.local (já tem [nexus-ftp])"
+    skip "fail2ban (nenhum arquivo mudou — sem restart)"
   fi
 fi
 
@@ -603,9 +631,18 @@ if confirm_step "UFW firewall (regras + enable)" \
     for cidr in "${CIDRS[@]}"; do
       cidr="${cidr// /}"  # trim spaces
       [ -z "$cidr" ] && continue
+      # Valida ANTES de tocar no UFW: 'ufw allow from <CIDR_ruim>' sai !=0 e, sob set -e,
+      # abortaria o passo 7 com o firewall ainda DESABILITADO (antes do enable) + sem .env.
+      if ! [[ "$cidr" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]]; then
+        warn "ufw: CIDR inválido em NEXUS_EXTRA_CIDRS, ignorado: '$cidr'"
+        continue
+      fi
       if ! ufw status | grep -E '123/udp' | grep -q "$cidr"; then
-        ufw allow from "$cidr" to any port 123 proto udp comment "NTP server $cidr extra" >/dev/null
-        ok "ufw: NTP allow $cidr (extra)"
+        if ufw allow from "$cidr" to any port 123 proto udp comment "NTP server $cidr extra" >/dev/null 2>&1; then
+          ok "ufw: NTP allow $cidr (extra)"
+        else
+          warn "ufw: falhou ao adicionar NTP allow '$cidr' — ignorado"
+        fi
       fi
     done
   fi
@@ -615,7 +652,11 @@ if confirm_step "UFW firewall (regras + enable)" \
     # habilitado no systemd ANTES do `ufw enable` — senão o enable retorna OK
     # mas o serviço fica `inactive (dead)` após reboot. Sequência defensiva:
     systemctl enable ufw >/dev/null 2>&1 || true
-    yes | ufw enable >/dev/null
+    # `ufw --force enable` (NÃO `yes | ufw enable`): sob `set -euo pipefail`, quando o
+    # ufw fecha o stdin após ler a confirmação, o `yes` leva SIGPIPE e o pipeline retorna
+    # 141 → o script abortava logo após ativar o UFW, pulando os passos 8 (.env) e 9 (cron).
+    # `--force` já dispensa o prompt, sem precisar do pipe.
+    ufw --force enable >/dev/null
     sleep 1
     # Pós-check explícito — `ufw enable` pode reportar sucesso mas o serviço
     # acabar morto. Valida o estado real.
@@ -649,10 +690,11 @@ if confirm_step "Gera .env com secrets aleatórios + placeholders" \
   cd "$REPO_DIR" 2>/dev/null || fail "REPO_DIR $REPO_DIR não existe"
 
   if [ -f .env ]; then
-    # Backup com timestamp antes de pular — bom pra recovery se alguém editou
-    # errado e quer voltar pra última versão automática.
-    cp .env ".env.bak.$(date +%Y%m%d-%H%M%S)"
-    skip ".env (já existe — backup salvo em .env.bak.*, NÃO sobrescrevo)"
+    # NÃO sobrescreve .env existente (perder ENCRYPTION_KEY/DB_EXPORT_KEY = dados viram
+    # lixo). Mantém UM backup rolante chmod 600 — NÃO timestamp a cada re-run, senão
+    # acumularia N cópias dos secrets em texto puro (e cp herda 644, não 600).
+    cp .env .env.bak && chmod 600 .env.bak
+    skip ".env (já existe — backup em .env.bak [600], NÃO sobrescrevo)"
   else
     SECRET_KEY="$(openssl rand -hex 64)"
     # Fernet expects 32 bytes URL-safe base64 — equivalent to Fernet.generate_key()
