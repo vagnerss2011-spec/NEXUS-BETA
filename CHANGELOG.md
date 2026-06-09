@@ -10,6 +10,10 @@ Política de bump:
 
 ## [Não lançado]
 
+_(linhas que vão entrar na próxima tag)_
+
+## [2.6.0] - 2026-06-09
+
 ### Adicionado — fabricante Datacom DM1200 (CLI legada com `enable`)
 
 - Novo fabricante **Datacom DM1200** no dropdown de dispositivos. O DM1200 usa a CLI Cisco-like legada (não o DmOS), que cai em modo **não-privilegiado** no login — `show running-config` só responde depois de `enable`. O coletor (`_run_datacom_netmiko` com `enable_first=True`) manda `enable` antes de desabilitar paginação e puxar a config.
@@ -1050,7 +1054,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.2...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.5.1...v2.6.0
 [2.0.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v1.4.9...v2.0.0
