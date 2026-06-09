@@ -26,9 +26,12 @@ npm run dev
 
 ## Credenciais de desenvolvimento
 
-- **Usuário admin:** vagnerss2011@gmail.com / Admin@2025
-- **PostgreSQL:** localhost:5432 / banco: `dbnexus` / user: `postgres`
-- **Senha do banco:** no arquivo `backend/.env` (não commitado)
+Cada ambiente (dev local, ibiunet, bandaa, camon, etc.) tem suas próprias credenciais — **não há senha padrão neste repositório**. No primeiro boot:
+
+- O usuário admin master é criado manualmente (vide `INSTALL.md` ou o tutorial na wiki) — você escolhe email + senha; senha temporária força troca no primeiro login.
+- A senha do PostgreSQL fica em `backend/.env` (gerada pelo install script ou definida manualmente). O `.env` **nunca** é commitado.
+
+> ⚠️ O repositório é público desde maio/2026. Não anote credenciais reais aqui — use sempre placeholders genéricos pra documentação de formato.
 
 ## Configuração obrigatória
 
