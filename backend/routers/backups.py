@@ -9,6 +9,7 @@ from schemas import BackupOut, BackupWithDevice, BackupListWithDevice
 from services.ssh_service import run_backup
 from services.scheduler import _limpar_backups_antigos
 from services import audit
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/backups", tags=["backups"])
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api/backups", tags=["backups"])
 @router.get("/", response_model=List[BackupListWithDevice])
 async def listar_backups(
     empresa_id: Optional[int] = Query(default=None),
+    dias: int = Query(default=8, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -24,12 +26,23 @@ async def listar_backups(
     # isso pra exibir KB/MB e detectar truncamento. Conteúdo é buscado sob
     # demanda no preview (GET /{id}/download). Antes a listagem trazia tudo
     # inline e gerava payloads de dezenas de MB que travavam o frontend.
+    #
+    # Janela por DATA em vez de teto fixo de linhas. O `limit(200)` antigo
+    # colapsava esta listagem (feed de atividade recente) pra ~1 dia em
+    # instâncias de alto volume — ex.: camon, 113 backups/dia → 200 linhas ≈
+    # 1,2 dia — escondendo backups que ESTÃO retidos no banco. Default 8 dias
+    # cobre a semana de retenção (7) com folga; `dias` é ajustável (?dias=30).
+    # Histórico completo por device segue SEM corte em /backups/device/{id}.
+    # O limit(5000) é só teto de segurança anti-payload-patológico — como o
+    # `conteudo` é deferido, cada linha é leve (só metadados).
+    corte = datetime.now(timezone.utc) - timedelta(days=dias)
     q = (
         select(Backup, func.length(Backup.conteudo).label("tamanho"))
         .join(Device, Backup.device_id == Device.id)
         .options(selectinload(Backup.device), defer(Backup.conteudo))
+        .where(Backup.criado_em >= corte)
         .order_by(Backup.criado_em.desc())
-        .limit(200)
+        .limit(5000)
     )
     if is_master(user):
         if empresa_id is not None:
