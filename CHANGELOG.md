@@ -12,6 +12,14 @@ Política de bump:
 
 _(linhas que vão entrar na próxima tag)_
 
+## [2.6.1] - 2026-06-25
+
+### Corrigido — listagem de backups colapsava pra ~1 dia em instâncias de alto volume
+
+- A página de Backups (`GET /api/backups/`) usava teto fixo de `limit(200)` registros. Em clientes com muitos devices (ex.: ~113 backups/dia), 200 linhas ≈ 1,2 dia — a UI parecia "só guardar os últimos 2 dias", embora os backups estivessem **retidos normalmente** no banco (a retenção por device **não** foi afetada). Só aparecia em alto volume; em instância pequena, 200 cobria semanas.
+- Trocado por **janela de data**: retorna os backups dos últimos `dias` (default **8**, cobre a semana de retenção com folga) + teto de segurança de 5000 linhas. `dias` é query param ajustável (`?dias=30`). Como o `conteudo` já era deferido, a janela é barata (só metadados).
+- Efeito colateral positivo: o filtro por device da página (client-side) também era limitado pelas 200 linhas — agora enxerga a janela inteira. Histórico completo por device segue sem corte em `GET /api/backups/device/{id}`.
+
 ## [2.6.0] - 2026-06-09
 
 ### Adicionado — fabricante Datacom DM1200 (CLI legada com `enable`)
@@ -1054,7 +1062,8 @@ Primeira versão estável. Em produção em `backup.bandaa.net.br` desde abril/2
 - Backup do volume `pgdata` + `infra/state/` (host key) é manual via cron — não há job automático.
 - Sem checagem de versão no painel: cada instância roda a tag que foi deployada manualmente (ver [RELEASING.md](RELEASING.md)).
 
-[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.6.0...HEAD
+[Não lançado]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.5.1...v2.6.0
 [2.0.2]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/vagnerss2011-spec/NEXUS-BETA/compare/v2.0.0...v2.0.1
