@@ -108,7 +108,10 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
-      NGINX_ENVSUBST_VARS: "DOMAIN"
+      # O script usa "bootstrap" durante o ACME e "live" após a emissão.
+      # NGINX_ENVSUBST_FILTER é a variável suportada pela imagem nginx oficial.
+      NEXUS_CERT_SCOPE: ${NEXUS_CERT_SCOPE:-live}
+      NGINX_ENVSUBST_FILTER: '^(DOMAIN|NEXUS_CERT_SCOPE)$'
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - ./infra/certbot/conf:/etc/letsencrypt
@@ -120,7 +123,9 @@ services:
       /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec /docker-entrypoint.sh nginx -g 'daemon off;'"
 
   certbot:
-    image: certbot/certbot
+    # Pinado junto dos parâmetros TLS baixados pelo init-letsencrypt.sh.
+    # Evita mudança incompatível do `latest` no meio de uma instalação.
+    image: certbot/certbot:v5.7.0
     restart: unless-stopped
     volumes:
       - ./infra/certbot/conf:/etc/letsencrypt

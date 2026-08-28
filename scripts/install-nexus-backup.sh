@@ -209,7 +209,7 @@ REPO_DIR='/root/NEXUS-BETA'
 if confirm_step "Sistema base (locale, timezone, apt deps)" \
 "  Instala locale pt_BR.UTF-8, define timezone America/Sao_Paulo e
   instala pacotes do host: git, ufw, fail2ban, chrony, ca-certificates,
-  curl, gnupg, jq.
+  curl, gnupg, jq, openssl.
   Por que: o backend (Python no container) lê TZ via tzdata; sem
   America/Sao_Paulo o scheduler roda em UTC silenciosamente."; then
 
@@ -229,7 +229,7 @@ if confirm_step "Sistema base (locale, timezone, apt deps)" \
     skip "timezone"
   fi
 
-  APT_DEPS=(git ufw fail2ban chrony ca-certificates curl gnupg jq)
+  APT_DEPS=(git ufw fail2ban chrony ca-certificates curl gnupg jq openssl)
   MISSING=()
   for p in "${APT_DEPS[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")

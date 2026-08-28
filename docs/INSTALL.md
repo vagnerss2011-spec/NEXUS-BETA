@@ -233,21 +233,52 @@ dig +short $(grep ^DOMAIN= /root/NEXUS-BETA/.env | cut -d= -f2)
 # Deve retornar o IP público da VM
 ```
 
-Se o DNS ainda não propagou (TTL alto), **espera** — sem isso o certbot falha e você queima rate-limit do Let's Encrypt (50 falhas/hora/IP).
+Se o DNS ainda não propagou (TTL alto), **espere**. Falhas de autorização em
+produção têm limite de **5 por identificador e por conta a cada hora** (a
+capacidade volta gradualmente, uma a cada 12 minutos). O limite não é
+"50 falhas por IP". Consulte sempre a
+[documentação oficial de rate limits](https://letsencrypt.org/docs/rate-limits/).
 
-Aí roda:
+> **Erro `curl: (22) ... 404` antes de o Certbot iniciar:** versões até
+> `v2.6.1` apontavam para um arquivo que foi movido no repositório do Certbot.
+> O script corrigido usa arquivos da release oficial `v5.7.0` pinados por
+> commit e SHA-256, faz download atômico e repara automaticamente o arquivo
+> vazio deixado pela falha antiga.
+> Atualize `init-letsencrypt.sh` antes de repetir; não é necessário apagar
+> `.env`, `infra/` nem o repositório.
+
+Se a VM parou exatamente nesse 404, basta atualizar o código; o próximo run
+repara o arquivo vazio automaticamente:
+
+```bash
+cd /root/NEXUS-BETA
+git pull --ff-only
+```
+
+Depois rode:
 
 ```bash
 cd /root/NEXUS-BETA
 
-# Primeira tentativa: STAGING (não consome rate-limit, valida o fluxo)
+# Primeira tentativa: usa os limites separados de STAGING e não grava cert falso
 STAGING=1 ./init-letsencrypt.sh
 
-# Se chegou em "pronto! acesse: https://...", roda o real:
+# Se chegou em "teste STAGING concluído", emita/ative o real:
 ./init-letsencrypt.sh
 ```
 
-O script sobe o nginx com cert dummy, baixa o real, recarrega. Renovação automática roda no container `certbot` a cada 12h.
+O script mantém o certificado temporário em `conf/bootstrap/`, separado do
+lineage real em `conf/live/`; confirma que o nginx está servindo o webroot na
+porta 80 antes de chamar o Certbot; e usa `--dry-run` no STAGING. Ele **não
+apaga um certificado válido antes da nova emissão**. Se o Let's Encrypt falhar,
+o certificado que já estava ativo continua preservado. A renovação automática
+roda no container `certbot` a cada 12h.
+
+> STAGING também tem limites, porém separados e bem mais altos que produção.
+> O teste bem-sucedido não deixa um certificado STAGING salvo. Em instalação
+> nova, o navegador ainda pode mostrar o certificado bootstrap autoassinado;
+> valide esta etapa pela mensagem no terminal, não pelo navegador. O HTTPS
+> confiável só aparece após o segundo comando, sem `STAGING=1`.
 
 ---
 
@@ -397,7 +428,7 @@ systemctl restart fail2ban   # ← obrigatório
 | Container backend reiniciando | Erro de migration → `docker compose logs backend` |
 | Senha SSH no banco vira lixo após reinstalar | `ENCRYPTION_KEY` diferente da anterior |
 | fail2ban "no chain DOCKER-USER" | Docker reiniciou e fail2ban não foi reiniciado depois |
-| Cert Let's Encrypt 429 (rate limit) | Bateu em produção sem STAGING — esperar 1h ou pedir ao LE |
+| Cert Let's Encrypt 429 (rate limit) | Consulte o detalhe/`Retry-After`; cada limite tem janela e reposição próprias. Valide antes com `STAGING=1` e veja [os limites oficiais](https://letsencrypt.org/docs/rate-limits/) |
 | Conflito IP container ↔ cliente | Cliente em `10.17.x.x` ou `10.18.x.x` — ajustar `bip`/`pools` no daemon.json (ver memória `project_docker_network.md` no projeto) |
 | 502 Bad Gateway no painel | Container backend down ou nginx não consegue resolver `backend:8000` (rede Docker) |
 

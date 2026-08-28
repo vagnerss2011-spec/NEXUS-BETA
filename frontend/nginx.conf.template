@@ -26,8 +26,10 @@ server {
     http2 on;
     server_name ${DOMAIN};
 
-    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    # Bootstrap e certificado real ficam separados. Assim uma falha ACME nunca
+    # exige apagar o lineage válido que o nginx já está usando.
+    ssl_certificate     /etc/letsencrypt/${NEXUS_CERT_SCOPE}/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/${NEXUS_CERT_SCOPE}/${DOMAIN}/privkey.pem;
     include             /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 

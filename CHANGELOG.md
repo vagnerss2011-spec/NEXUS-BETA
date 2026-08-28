@@ -10,7 +10,35 @@ Política de bump:
 
 ## [Não lançado]
 
-_(linhas que vão entrar na próxima tag)_
+### Corrigido — bootstrap HTTPS falhava com HTTP 404
+
+- `init-letsencrypt.sh` não depende mais do path removido
+  `certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf`
+  na antiga branch `master` do Certbot. Os parâmetros TLS agora vêm de paths
+  válidos fixados no commit da release oficial `v5.7.0`, com validação
+  SHA-256. A imagem Docker do Certbot também foi pinada em `v5.7.0`.
+- Downloads de `options-ssl-nginx.conf` e `ssl-dhparams.pem` agora são
+  atômicos, têm retry e rejeitam conteúdo vazio. Uma VM atingida pelo 404
+  anterior é recuperada automaticamente no próximo run, mesmo que tenha
+  ficado um arquivo de zero bytes em `infra/certbot/conf/`.
+- O certificado temporário agora fica isolado em `conf/bootstrap/`; o script
+  não executa mais `rm -rf` no lineage `live/archive/renewal` antes de emitir.
+  Lineages antigos incompletos são movidos para `infra/certbot/recovery/`, em
+  vez de apagados. Pares completos que não possam ser validados são preservados
+  no lugar e o script aborta para revisão manual.
+- `STAGING=1` usa `certbot --dry-run`, testa o challenge sem gravar certificado
+  falso. Antes de chamar a ACME, o script confirma que o nginx está realmente
+  servindo um token pelo webroot na porta 80.
+- Reexecuções preservam o certificado existente com
+  `--keep-until-expiring`; lineages STAGING legados são migrados sem remoção
+  antecipada. Certificado, chave, SAN, configuração nginx e resposta HTTPS são
+  validados antes de concluir.
+- A validação de chave usa a chave pública genérica do OpenSSL e aceita
+  lineages RSA ou ECDSA. Certificados com SANs extras e servidores ACME
+  desconhecidos são preservados e exigem revisão, evitando remover nomes ou
+  migrar lineages administrados externamente.
+- Corrigida a variável da imagem nginx de `NGINX_ENVSUBST_VARS` (inexistente)
+  para `NGINX_ENVSUBST_FILTER`, limitada a `DOMAIN` e `NEXUS_CERT_SCOPE`.
 
 ## [2.6.1] - 2026-06-25
 
